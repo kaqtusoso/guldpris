@@ -22,7 +22,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 TIMEOUT = 30
 
 KARAT_ALIASES = {
-    "24": "24K", "23": "23K", "22": "22K", "21": "21K",
+    "24": "24K", "23": "23K", "22": "22K", "21": "21K", "20": "20K",
     "18": "18K", "14": "14K", "12": "12K", "10": "10K", "9": "9K", "8": "8K",
 }
 KARAT_ORDER = ["24K", "23K", "22K", "21K", "18K", "14K", "12K", "10K", "9K", "8K"]
@@ -59,13 +59,22 @@ def playwright_get(url: str) -> BeautifulSoup | None:
     except ImportError:
         print("  [INFO] Playwright saknas. Kör: pip install playwright && playwright install chromium", file=sys.stderr)
         return None
-    try:
+
+    import concurrent.futures
+
+    def _fetch():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto(url, wait_until="networkidle", timeout=30_000)
             html = page.content()
             browser.close()
+        return html
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch)
+            html = future.result(timeout=60)
         return BeautifulSoup(html, "html.parser")
     except Exception as exc:
         print(f"  [FEL] Playwright {url}: {exc}", file=sys.stderr)
