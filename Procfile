@@ -1,0 +1,1 @@
+web: uvicorn fastapi_guldpris_scraper:app --host 0.0.0.0 --port $PORT
