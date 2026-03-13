@@ -2,20 +2,23 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
-import json, glob, os, sys
+import sys, os
 
-# Lägg till mappen i path så att guldpris_scraper kan importeras
 sys.path.append(os.path.dirname(__file__))
-from guldpris_scraper import AKTÖRER, save_json
+from guldpris_scraper import AKTÖRER, KARAT_ORDER
 from datetime import datetime
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"])
 
+# Lagra senaste priserna i minnet
+latest_prices: dict = {}
+
 
 def kör_scraper():
-    print(f"[SCRAPER] Kör kl {datetime.now().strftime('%H:%M')}...")
+    global latest_prices
     now = datetime.now()
+    print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
     all_prices = {}
     for name, fetcher in AKTÖRER:
         try:
@@ -23,7 +26,17 @@ def kör_scraper():
         except Exception as e:
             print(f"[FEL] {name}: {e}")
             all_prices[name] = {}
-    save_json(all_prices, now)
+    latest_prices = {
+        "hämtad": now.strftime("%Y-%m-%d %H:%M"),
+        "priser": {
+            aktör: {
+                karat: priser[karat]
+                for karat in KARAT_ORDER
+                if karat in priser
+            }
+            for aktör, priser in all_prices.items()
+        },
+    }
     print("[SCRAPER] Klar!")
 
 
@@ -36,11 +49,9 @@ scheduler.start()
 
 @app.get("/priser")
 def get_priser():
-    filer = sorted(glob.glob("Guldpriser/*.json"))
-    if not filer:
+    if not latest_prices:
         return {"error": "Inga priser hittades ännu."}
-    with open(filer[-1], encoding="utf-8") as f:
-        return json.load(f)
+    return latest_prices
 
 
 @app.get("/")
