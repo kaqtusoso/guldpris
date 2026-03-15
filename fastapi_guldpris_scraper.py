@@ -40,10 +40,10 @@ def kör_scraper():
     print("[SCRAPER] Klar!")
 
 
-# Kör scrapern vid start och sedan varje timme
+# Kör scrapern vid start och sedan var 4e timme på jämna klockslag (00, 04, 08, 12, 16, 20)
 kör_scraper()
 scheduler = BackgroundScheduler()
-scheduler.add_job(kör_scraper, "interval", hours=1)
+scheduler.add_job(kör_scraper, "cron", hour="0,4,8,12,16,20", minute=0)
 scheduler.start()
 
 
