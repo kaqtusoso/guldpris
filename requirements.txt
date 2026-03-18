@@ -4,3 +4,5 @@ requests
 beautifulsoup4
 playwright
 apscheduler
+gspread
+google-auth
