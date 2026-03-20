@@ -13,7 +13,12 @@ sys.path.append(os.path.dirname(__file__))
 from guldpris_scraper import AKTÖRER, KARAT_ORDER
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 latest_prices: dict = {}
 
