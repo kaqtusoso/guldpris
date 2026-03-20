@@ -137,7 +137,7 @@ def from_table(soup: BeautifulSoup) -> dict[str, float]:
 
 # ── 1. Guldbrev ───────────────────────────────────────────────────────────────
 def fetch_guldbrev() -> dict[str, float]:
-    soup = get("https://www.guldbrev.se/guldpris/")
+    soup = playwright_get("https://www.guldbrev.se/guldpris/")
     if not soup:
         return {}
     return from_text(clean(soup.get_text(" ", strip=True)))
@@ -188,7 +188,7 @@ def fetch_pantit() -> dict[str, float]:
 
 # ── 4. Noblex ─────────────────────────────────────────────────────────────────
 def fetch_noblex() -> dict[str, float]:
-    soup = get("https://noblex.se/salja-guld/")
+    soup = playwright_get("https://noblex.se/salja-guld/")
     if not soup:
         return {}
     prices = from_table(soup)
