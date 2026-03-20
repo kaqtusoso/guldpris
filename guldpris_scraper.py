@@ -25,7 +25,7 @@ KARAT_ALIASES = {
     "24": "24K", "23": "23K", "22": "22K", "21": "21K", "20": "20K",
     "18": "18K", "14": "14K", "12": "12K", "10": "10K", "9": "9K", "8": "8K",
 }
-KARAT_ORDER = ["24K", "23K", "22K", "21K", "18K", "14K", "12K", "10K", "9K", "8K"]
+KARAT_ORDER = ["24K", "23K", "22K", "21K", "20K", "18K", "14K", "12K", "10K", "9K", "8K"]
 
 
 # ── Hjälpfunktioner ───────────────────────────────────────────────────────────
@@ -82,10 +82,16 @@ def playwright_get(url: str) -> BeautifulSoup | None:
 
 
 def from_text(text: str) -> dict[str, float]:
-    """Regex-parsning av 'XK 1 234 kr/g' eller 'X karat 1 234 kr/gram'."""
+    """Regex-parsning av 'XK 1 234 kr/g' eller 'X karat 1 234 kr/gram'.
+
+    FIX: Prisgruppen använder [\d\xa0\u202f]+ istället för [\d\s]+ så att
+    vanliga mellanslag (som separerar olika karat-poster) inte sväljs av
+    en girig match – vilket tidigare gjorde att t.ex. 20K missades.
+    """
     prices: dict[str, float] = {}
     for m in re.finditer(
-        r"\b(24K|23K|22K|21K|18K|14K|12K|10K|9K|8K)\b\s*([\d\s]+(?:[.,]\d{1,2})?)\s*kr/g",
+        r"\b(24K|23K|22K|21K|20K|18K|14K|12K|10K|9K|8K)\b\s*"
+        r"([\d]+(?:[\xa0\u202f]\d+)*(?:[.,]\d{1,2})?)\s*kr/g",
         text, flags=re.IGNORECASE,
     ):
         key = m.group(1).upper()
@@ -96,7 +102,7 @@ def from_text(text: str) -> dict[str, float]:
                 pass
     if not prices:
         for m in re.finditer(
-            r"(\d{1,2})\s*karat\s*([\d\s]+(?:[.,]\d{1,2})?)\s*kr/gram",
+            r"(\d{1,2})\s*karat\s*([\d]+(?:[\xa0\u202f]\d+)*(?:[.,]\d{1,2})?)\s*kr/gram",
             text, flags=re.IGNORECASE,
         ):
             key = KARAT_ALIASES.get(m.group(1))
@@ -199,7 +205,7 @@ def fetch_finguld() -> dict[str, float]:
     text = clean(soup.get_text(" ", strip=True))
     prices: dict[str, float] = {}
     for m in re.finditer(
-        r"\b(24K|23K|22K|21K|18K|14K|9K)\b\s*[–\-]\s*([\d\s]+(?:[.,]\d{1,2})?)\s*kr/g",
+        r"\b(24K|23K|22K|21K|20K|18K|14K|12K|10K|9K|8K)\b\s*[–\-]\s*([\d\s]+(?:[.,]\d{1,2})?)\s*kr/g",
         text, flags=re.IGNORECASE,
     ):
         key = m.group(1).upper()
@@ -221,7 +227,7 @@ def fetch_svenska_guld() -> dict[str, float]:
     text = clean(soup.get_text(" ", strip=True))
 
     block = re.search(
-        r"((?:[\d  ,]+kr/g\s*){2,})((?:(?:24|23|22|21|18|14|9)k\s*){2,})",
+        r"((?:[\d  ,]+kr/g\s*){2,})((?:(?:24|23|22|21|20|18|14|9)k\s*){2,})",
         text, flags=re.IGNORECASE,
     )
     if block:
