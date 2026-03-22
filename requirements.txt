@@ -6,3 +6,5 @@ playwright
 apscheduler
 gspread
 google-auth
+sendgrid
+pydantic[email]
