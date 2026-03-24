@@ -528,14 +528,14 @@ AKTÖRER = [
     ("Pantit",             fetch_pantit),
     ("Noblex",             fetch_noblex),
     ("Finguld",            fetch_finguld),
-    (# "Svenska Guld",       fetch_svenska_guld),
+    # ("Svenska Guld",       fetch_svenska_guld),
     ("Kaplans Ädelmetall", fetch_kaplans),
     ("Guldcentralen",      fetch_guldcentralen),
     # --- Nya ---
     ("Pantbanken",         fetch_pantbanken),
     ("Sefina Pantbank",    fetch_sefina),
     ("WebbGuld",           fetch_webbguld),
-    (# "Q Pantbank",         fetch_qpantbank),
+    # ("Q Pantbank",         fetch_qpantbank),
     ("Guldfynd",           fetch_guldfynd),
     ("Capitaurum",         fetch_capitaurum),
 ]
