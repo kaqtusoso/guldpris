@@ -334,7 +334,7 @@ AKTÖRER = [
     ("Pantit",             fetch_pantit),
     ("Noblex",             fetch_noblex),
     ("Finguld",            fetch_finguld),
-    ("Svenska Guld",       fetch_svenska_guld),
+    # ("Svenska Guld",       fetch_svenska_guld),  # Pausad – beställningar stängda tillfälligt
     ("Kaplans Ädelmetall", fetch_kaplans),
     ("Guldcentralen",      fetch_guldcentralen),
 ]
