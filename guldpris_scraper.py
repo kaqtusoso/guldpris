@@ -321,20 +321,18 @@ def fetch_pantbanken() -> dict[str, float]:
 def fetch_sefina() -> dict[str, float]:
     """
     Sefina visar priser som "Guld 24 karat. 875 kr per gram." på /guldpriser/.
-    Sidan kan returnera 403 för vanliga requests – försöker med playwright om så.
+    Sidan blockerar enkla requests – använder playwright direkt.
     """
-    soup = get("https://www.sefina.se/guldpriser/")
-    if not soup:
-        soup = playwright_get("https://www.sefina.se/guldpriser/")
+    soup = playwright_get("https://www.sefina.se/guldpriser/")
     if not soup:
         return {}
 
     text = clean(soup.get_text(" ", strip=True))
     prices: dict[str, float] = {}
 
-    # Mönster: "Guld 24 karat. 875 kr per gram" eller "24 karat 875 kr per gram"
+    # Mönster 1: "Guld 24 karat. 875 kr per gram" eller "24 karat 875 kr per gram"
     for m in re.finditer(
-        r"(?:guld\s+)?(\d{1,2})\s*karat[.\s]+([\d\s]+(?:[.,]\d{1,2})?)\s*kr\s*per\s*gram",
+        r"(?:guld\s+)?(\d{1,2})\s*[Kk]arat[.\s,]+([\d\s]+(?:[.,]\d{1,2})?)\s*kr\s*per\s*gram",
         text, flags=re.IGNORECASE,
     ):
         key = KARAT_ALIASES.get(m.group(1))
@@ -344,6 +342,7 @@ def fetch_sefina() -> dict[str, float]:
             except ValueError:
                 pass
 
+    # Mönster 2: "24K 875 kr/g" (standardformat)
     if not prices:
         prices = from_text(text)
     if not prices:
@@ -354,35 +353,61 @@ def fetch_sefina() -> dict[str, float]:
 # ── 11. WebbGuld ──────────────────────────────────────────────────────────────
 def fetch_webbguld() -> dict[str, float]:
     """
-    WebbGuld renderar priser dynamiskt med JS.
-    Priserna laddas via ett API-anrop till /api/prices eller liknande,
-    men eftersom sidan är React/JS-renderad använder vi playwright.
-    Priserna visas i en tabell med rader som "24K ... 1188 kr".
+    WebbGuld renderar priser dynamiskt med JS (React).
+    Priserna visas i format: "24K  1 188 kr/g" eller "18K  891 kr/g".
+    Väntar på att priserna faktiskt laddas in (networkidle räcker inte alltid).
     """
-    soup = playwright_get("https://webbguld.se/guldpris")
-    if not soup:
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {}
+
+    import concurrent.futures
+
+    def _fetch():
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://webbguld.se/guldpris", timeout=30_000)
+            # Vänta tills ett pris-element syns (innehåller "kr/g")
+            try:
+                page.wait_for_selector("text=kr/g", timeout=15_000)
+            except Exception:
+                pass
+            html = page.content()
+            browser.close()
+        return html
+
+    try:
+        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(max_workers=1) as ex:
+            html = ex.submit(_fetch).result(timeout=60)
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as exc:
+        print(f"  [FEL] Playwright webbguld: {exc}", file=sys.stderr)
         return {}
 
     text = clean(soup.get_text(" ", strip=True))
     prices: dict[str, float] = {}
 
-    # Mönster: "24K ... 1 188 kr" – leta efter karat följt av pris
-    for m in re.finditer(
-        r"\b(24K|23K|22K|21(?:\.6)?K|21K|20K|18K|14K|10K|9K|8K)\b[^0-9]{0,20}?([\d][\d\s]{1,6}(?:[.,]\d{1,2})?)\s*kr\b",
-        text, flags=re.IGNORECASE,
-    ):
-        raw_karat = m.group(1).upper().replace(".6", "")  # 21.6K → 21K
-        key = raw_karat if raw_karat in KARAT_ORDER else None
-        if key and key not in prices:
-            try:
-                val = to_float(m.group(2))
-                if 100 < val < 10000:  # rimlighetskontroll
-                    prices[key] = val
-            except ValueError:
-                pass
+    # Primär: standardformat "24K 1 188 kr/g"
+    prices = from_text(text)
 
+    # Fallback: "24K ... 1188 kr" (utan /g)
     if not prices:
-        prices = from_text(text)
+        for m in re.finditer(
+            r"\b(24K|23K|22K|21(?:\.6)?K|21K|20K|18K|14K|10K|9K|8K)\b[^\d]{0,30}?(\d[\d\s]{2,7})\s*kr\b",
+            text, flags=re.IGNORECASE,
+        ):
+            raw = m.group(1).upper().replace(".6", "")
+            key = raw if raw in KARAT_ORDER else None
+            if key and key not in prices:
+                try:
+                    val = to_float(m.group(2))
+                    if 100 < val < 10000:
+                        prices[key] = val
+                except ValueError:
+                    pass
+
     return prices
 
 
@@ -408,39 +433,48 @@ def fetch_qpantbank() -> dict[str, float]:
 # ── 13. Guldfynd ──────────────────────────────────────────────────────────────
 def fetch_guldfynd() -> dict[str, float]:
     """
-    Guldfynd visar inköpspriser på /byraladsguld/ som en tabell
-    med kolumner karat och "Kontant ersättning per gram".
+    Guldfynd visar inköpspriser på /byraladsguld/ i en tabell med kolumner
+    "Karat" och "Kontant ersättning per gram".
+    Provar också /salja-guld/ som fallback om URL:en ändrats.
     """
-    soup = get("https://www.guldfynd.se/byraladsguld/")
+    for url in [
+        "https://www.guldfynd.se/byraladsguld/",
+        "https://www.guldfynd.se/salja-guld/",
+        "https://www.guldfynd.se/kop-guld/",
+    ]:
+        soup = get(url)
+        if soup:
+            break
     if not soup:
         return {}
 
     prices: dict[str, float] = {}
 
-    # Leta efter tabellrader
+    # Försök hitta tabellrader med karat i första kolumnen
     for row in soup.find_all("tr"):
         cells = row.find_all(["td", "th"])
         if len(cells) < 2:
             continue
         label = clean(cells[0].get_text())
-        # Hitta cell med numeriskt pris
+        key = norm_karat(label)
+        if not key:
+            continue
+        # Sök igenom resterande celler efter ett numeriskt pris
         for cell in cells[1:]:
             val_text = clean(cell.get_text())
-            key = norm_karat(label)
-            m = re.search(r"([\d\s]+(?:[.,]\d{1,2})?)", val_text)
-            if key and m:
+            m = re.search(r"([\d][\d\s]*(?:[.,]\d{1,2})?)", val_text)
+            if m:
                 try:
                     val = to_float(m.group(1))
                     if 50 < val < 10000 and key not in prices:
                         prices[key] = val
+                        break
                 except ValueError:
                     pass
 
     if not prices:
         text = clean(soup.get_text(" ", strip=True))
         prices = from_text(text)
-        if not prices:
-            prices = from_table(soup)
 
     return prices
 
@@ -448,32 +482,45 @@ def fetch_guldfynd() -> dict[str, float]:
 # ── 14. Capitaurum ────────────────────────────────────────────────────────────
 def fetch_capitaurum() -> dict[str, float]:
     """
-    Capitaurum visar priser på /guldpris/ – sidan är WordPress-baserad
-    med en priskalkylator. Försöker plocka ut priser från texten eller tabellen.
-    Kan kräva playwright om priser laddas dynamiskt.
+    Capitaurum visar priser på /salja-guld/ i en tabell med format:
+      "1 g Guld med finhalt 750/18k | 897.92kr"
+    Karathalten anges som finhalt (999/24k, 958/23k, 917/22k,
+    875/21k, 750/18k, 585/14k, 375/9k).
     """
-    soup = get("https://capitaurum.se/guldpris/")
+    # Finhalt → karat-mappning
+    FINHALT_TO_KARAT = {
+        "999": "24K", "958": "23K", "917": "22K",
+        "875": "21K", "750": "18K", "585": "14K", "375": "9K",
+    }
+
+    soup = get("https://capitaurum.se/salja-guld/")
     if not soup:
         return {}
 
     text = clean(soup.get_text(" ", strip=True))
+    prices: dict[str, float] = {}
 
-    prices = from_text(text)
-    if prices:
-        return prices
+    # Primär: "finhalt 750/18k ... 897.92kr" eller "750/18k ... 897,92 kr"
+    for m in re.finditer(
+        r"(?:finhalt\s+)?(\d{3})/(\d{1,2})k[^\d]{0,30}?([\d][\d\s]*[.,]?\d{0,2})\s*kr",
+        text, flags=re.IGNORECASE,
+    ):
+        finhalt = m.group(1)
+        key = FINHALT_TO_KARAT.get(finhalt)
+        if key and key not in prices:
+            try:
+                val = to_float(m.group(3))
+                if 100 < val < 10000:
+                    prices[key] = val
+            except ValueError:
+                pass
 
-    prices = from_table(soup)
-    if prices:
-        return prices
-
-    # Sista försök med playwright (om priser laddas via JS)
-    soup2 = playwright_get("https://capitaurum.se/guldpris/")
-    if not soup2:
-        return {}
-    text2 = clean(soup2.get_text(" ", strip=True))
-    prices = from_text(text2)
+    # Fallback: standardformat
     if not prices:
-        prices = from_table(soup2)
+        prices = from_text(text)
+    if not prices:
+        prices = from_table(soup)
+
     return prices
 
 
