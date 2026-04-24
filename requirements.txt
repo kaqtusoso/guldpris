@@ -9,3 +9,4 @@ google-auth
 sendgrid
 pydantic[email]
 python-dotenv
+anthropic
