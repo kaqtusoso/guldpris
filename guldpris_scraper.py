@@ -53,7 +53,8 @@ def get(url: str) -> BeautifulSoup | None:
         return None
 
 
-def playwright_get(url: str) -> BeautifulSoup | None:
+def playwright_get(url: str, wait_for: str | None = None, wait_ms: int = 4000) -> BeautifulSoup | None:
+    """Hämtar JS-renderad sida via Playwright. Använder 'domcontentloaded' + valfri selector + väntetid."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -64,9 +65,21 @@ def playwright_get(url: str) -> BeautifulSoup | None:
 
     def _fetch():
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=30_000)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            if wait_for:
+                try:
+                    page.wait_for_selector(wait_for, timeout=12_000)
+                except Exception:
+                    pass
+            # Ge JS alltid lite tid att rendera
+            page.wait_for_timeout(wait_ms)
             html = page.content()
             browser.close()
         return html
@@ -74,10 +87,50 @@ def playwright_get(url: str) -> BeautifulSoup | None:
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_fetch)
-            html = future.result(timeout=60)
+            html = future.result(timeout=90)
         return BeautifulSoup(html, "html.parser")
     except Exception as exc:
         print(f"  [FEL] Playwright {url}: {exc}", file=sys.stderr)
+        return None
+
+
+def playwright_click_and_get(start_url: str, link_text_pattern: str, wait_ms: int = 4000) -> BeautifulSoup | None:
+    """Navigerar till start_url, klickar på en länk som matchar link_text_pattern, returnerar HTML."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+
+    import concurrent.futures
+
+    def _fetch():
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page.goto(start_url, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(2000)
+            try:
+                page.get_by_text(link_text_pattern, exact=False).first.click(timeout=5_000)
+                page.wait_for_load_state("domcontentloaded")
+                page.wait_for_timeout(wait_ms)
+            except Exception as e:
+                print(f"  [INFO] Klick misslyckades ({e}) – använder nuvarande sida", file=sys.stderr)
+            html = page.content()
+            browser.close()
+        return html
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch)
+            html = future.result(timeout=90)
+        return BeautifulSoup(html, "html.parser")
+    except Exception as exc:
+        print(f"  [FEL] playwright_click_and_get {start_url}: {exc}", file=sys.stderr)
         return None
 
 
@@ -267,17 +320,56 @@ def fetch_kaplans() -> dict[str, float]:
 
 # ── 8. Guldcentralen ──────────────────────────────────────────────────────────
 def fetch_guldcentralen() -> dict[str, float]:
-    soup = get("https://www.guldcentralen.se/salj-guld")
-    if not soup:
-        return {}
-    text = clean(soup.get_text(" ", strip=True))
-    m = re.search(r"Pris f[oö]r 18k[^=]+=\s*(\d+)\s*sek/gram", text, re.IGNORECASE)
-    if not m:
-        return {}
-    p18 = float(m.group(1))
-    return {k: round(p18 * (int(k[:-1]) / 18), 2) for k in KARAT_ORDER if k not in ("12K", "10K", "8K")}
+    """
+    Guldcentralen's köppriser finns på karasmussen.com (moderbolaget).
+    Format: "18k Guldskrot 906,- /g" (punkt = tusensep, komma = decimal/noll).
+    """
+    def parse_scandinavian_prices(text: str) -> dict[str, float]:
+        """Parsar 'XK Guldskrot N.NNN,- /g' och 'XK ... N.NNN,NN /g'."""
+        prices: dict[str, float] = {}
+        # Mönster: "18k Guldskrot 906,- /g"  eller  "22k ... 1.042,- /g"
+        for m in re.finditer(
+            r"\b(\d{1,2})\s*[Kk][^\d]{0,30}?([\d]{1,4}(?:[.\s]\d{3})?)"
+            r"(?:,(\d{2})|,-)\s*/g",
+            text, flags=re.IGNORECASE,
+        ):
+            key = KARAT_ALIASES.get(m.group(1))
+            if not key or key in prices:
+                continue
+            # Bygg siffran: ta bort punkter (tusenseparator), lägg till decimal
+            int_part = m.group(2).replace(".", "").replace(" ", "")
+            dec_part = m.group(3) if m.group(3) else "00"
+            try:
+                val = float(f"{int_part}.{dec_part}")
+                if 50 < val < 10000:
+                    prices[key] = val
+            except ValueError:
+                pass
+        return prices
 
-
+    for url in [
+        "https://karasmussen.com/se/vi-koper-guld-och-silver/",
+        "https://karasmussen.com/se/vi-koper-guld-och-silver",
+        "https://karasmussen.com/se/metallpriser/",
+    ]:
+        soup = get(url)
+        if not soup:
+            soup = playwright_get(url, wait_ms=5000)
+        if not soup:
+            continue
+        text = clean(soup.get_text(" ", strip=True))
+        # Primär: skandinaviskt prisformat
+        prices = parse_scandinavian_prices(text)
+        if prices:
+            return prices
+        # Fallback: standardformat
+        prices = from_text(text)
+        if prices:
+            return prices
+        prices = from_table(soup)
+        if prices:
+            return prices
+    return {}
 # ── 9. Pantbanken ─────────────────────────────────────────────────────────────
 def fetch_pantbanken() -> dict[str, float]:
     """
@@ -320,97 +412,92 @@ def fetch_pantbanken() -> dict[str, float]:
 # ── 10. Sefina Pantbank ───────────────────────────────────────────────────────
 def fetch_sefina() -> dict[str, float]:
     """
-    Sefina visar priser som "Guld 24 karat. 875 kr per gram." på /guldpriser/.
-    Sidan blockerar enkla requests – använder playwright direkt.
+    Sefina skyddas av Cloudflare Bot Management (hårdaste skiktet).
+    Testat: playwright-stealth, camoufox, nodriver, curl_cffi – alla blockeras.
+    CF-challengen "löses" men origin-servern svarar aldrig.
+    Kräver betald scraping-API (t.ex. Zenrows) för att komma igenom.
     """
-    soup = playwright_get("https://www.sefina.se/guldpriser/")
-    if not soup:
-        return {}
-
-    text = clean(soup.get_text(" ", strip=True))
-    prices: dict[str, float] = {}
-
-    # Mönster 1: "Guld 24 karat. 875 kr per gram" eller "24 karat 875 kr per gram"
-    for m in re.finditer(
-        r"(?:guld\s+)?(\d{1,2})\s*[Kk]arat[.\s,]+([\d\s]+(?:[.,]\d{1,2})?)\s*kr\s*per\s*gram",
-        text, flags=re.IGNORECASE,
-    ):
-        key = KARAT_ALIASES.get(m.group(1))
-        if key and key not in prices:
-            try:
-                prices[key] = to_float(m.group(2))
-            except ValueError:
-                pass
-
-    # Mönster 2: "24K 875 kr/g" (standardformat)
-    if not prices:
-        prices = from_text(text)
-    if not prices:
-        prices = from_table(soup)
-    return prices
-
-
+    print("  [INFO] Sefina: Cloudflare Bot Management blockerar automatisk hämtning.", file=sys.stderr)
+    return {}
 # ── 11. WebbGuld ──────────────────────────────────────────────────────────────
 def fetch_webbguld() -> dict[str, float]:
     """
-    WebbGuld renderar priser dynamiskt med JS (React).
-    Priserna visas i format: "24K  1 188 kr/g" eller "18K  891 kr/g".
-    Väntar på att priserna faktiskt laddas in (networkidle räcker inte alltid).
+    WebbGuld har priserna hårdkodade direkt i en JS-funktion (change(e)) på
+    /salja-guld – inget API, inget Playwright behövs.
+
+    Priset varierar med vikt (gram). Vi returnerar priset för 1-4g (lägsta
+    viktintervallet) som jämförelsepris. Högre vikt ger något bättre pris.
+
+    OBS: Sajten har ett stavfel i JS – "rice8" istället för "price8" i
+    300g+-blocket. Det hanteras med en fallback-regex.
     """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return {}
+    _KARATS_JS = ["8", "9", "10", "14", "18", "20", "21", "22", "23"]
+    _KARAT_LABELS = {
+        "8": "8K", "9": "9K", "10": "10K", "14": "14K", "18": "18K",
+        "20": "20K", "21": "21K", "22": "22K", "23": "23K",
+    }
 
-    import concurrent.futures
-
-    def _fetch():
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto("https://webbguld.se/guldpris", timeout=30_000)
-            # Vänta tills ett pris-element syns (innehåller "kr/g")
-            try:
-                page.wait_for_selector("text=kr/g", timeout=15_000)
-            except Exception:
-                pass
-            html = page.content()
-            browser.close()
-        return html
+    def _extract_block(body: str) -> dict[str, float]:
+        prices: dict[str, float] = {}
+        for k in _KARATS_JS:
+            m = re.search(rf"price{k}\s*=\s*([\d.]+)", body)
+            if m:
+                prices[k] = float(m.group(1))
+            elif k == "8":
+                m2 = re.search(r"rice8\s*=\s*([\d.]+)", body)
+                if m2:
+                    prices[k] = float(m2.group(1))
+        return prices
 
     try:
-        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(max_workers=1) as ex:
-            html = ex.submit(_fetch).result(timeout=60)
-        soup = BeautifulSoup(html, "html.parser")
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        resp = requests.get("https://webbguld.se/salja-guld", headers=headers, timeout=20)
+        resp.raise_for_status()
+        soup_wg = BeautifulSoup(resp.text, "html.parser")
+
+        js_content = ""
+        for script in soup_wg.find_all("script"):
+            content = script.string or ""
+            if "price24" in content and "price18" in content and "change(" in content:
+                js_content = content
+                break
+
+        if not js_content:
+            return {}
+
+        result: dict[str, float] = {}
+
+        # 24K: fast pris
+        m24 = re.search(r"price24\s*=\s*([\d.]+)", js_content)
+        if m24:
+            result["24K"] = float(m24.group(1))
+
+        # Övriga karat: hitta det första if-blocket (e > 0 && e < 5 = "1-4g")
+        block_pattern = re.compile(
+            r"(?:if|else if)\s*\(e\s*>\s*(\d+)(?:\s*&&\s*e\s*<\s*(\d+))?\)\s*\{([^}]+)\}",
+            re.DOTALL,
+        )
+        for match in block_pattern.finditer(js_content):
+            lower = int(match.group(1))
+            upper = int(match.group(2)) if match.group(2) else None
+            if lower == 0 and upper == 5:  # 1-4g-blocket
+                for k, price in _extract_block(match.group(3)).items():
+                    label = _KARAT_LABELS.get(k)
+                    if label:
+                        result[label] = price
+                break
+
+        return {k: v for k, v in result.items() if 50 < v < 10000}
+
     except Exception as exc:
-        print(f"  [FEL] Playwright webbguld: {exc}", file=sys.stderr)
+        print(f"  [FEL] WebbGuld: {exc}", file=sys.stderr)
         return {}
-
-    text = clean(soup.get_text(" ", strip=True))
-    prices: dict[str, float] = {}
-
-    # Primär: standardformat "24K 1 188 kr/g"
-    prices = from_text(text)
-
-    # Fallback: "24K ... 1188 kr" (utan /g)
-    if not prices:
-        for m in re.finditer(
-            r"\b(24K|23K|22K|21(?:\.6)?K|21K|20K|18K|14K|10K|9K|8K)\b[^\d]{0,30}?(\d[\d\s]{2,7})\s*kr\b",
-            text, flags=re.IGNORECASE,
-        ):
-            raw = m.group(1).upper().replace(".6", "")
-            key = raw if raw in KARAT_ORDER else None
-            if key and key not in prices:
-                try:
-                    val = to_float(m.group(2))
-                    if 100 < val < 10000:
-                        prices[key] = val
-                except ValueError:
-                    pass
-
-    return prices
-
-
 # ── 12. Q Pantbank ────────────────────────────────────────────────────────────
 def fetch_qpantbank() -> dict[str, float]:
     """
@@ -433,61 +520,52 @@ def fetch_qpantbank() -> dict[str, float]:
 # ── 13. Guldfynd ──────────────────────────────────────────────────────────────
 def fetch_guldfynd() -> dict[str, float]:
     """
-    Guldfynd visar inköpspriser på /byraladsguld/ i en tabell med kolumner
-    "Karat" och "Kontant ersättning per gram".
-    Provar också /salja-guld/ som fallback om URL:en ändrats.
+    Guldfynd är en JS-renderad e-handelssajt (Viskan).
+    Provar /byraladsguld/ med Playwright, sedan requests-fallback.
     """
     for url in [
         "https://www.guldfynd.se/byraladsguld/",
         "https://www.guldfynd.se/salja-guld/",
         "https://www.guldfynd.se/kop-guld/",
     ]:
-        soup = get(url)
-        if soup:
-            break
-    if not soup:
-        return {}
-
-    prices: dict[str, float] = {}
-
-    # Försök hitta tabellrader med karat i första kolumnen
-    for row in soup.find_all("tr"):
-        cells = row.find_all(["td", "th"])
-        if len(cells) < 2:
+        soup = playwright_get(url)
+        if not soup:
+            soup = get(url)
+        if not soup:
             continue
-        label = clean(cells[0].get_text())
-        key = norm_karat(label)
-        if not key:
-            continue
-        # Sök igenom resterande celler efter ett numeriskt pris
-        for cell in cells[1:]:
-            val_text = clean(cell.get_text())
-            m = re.search(r"([\d][\d\s]*(?:[.,]\d{1,2})?)", val_text)
-            if m:
-                try:
-                    val = to_float(m.group(1))
-                    if 50 < val < 10000 and key not in prices:
-                        prices[key] = val
-                        break
-                except ValueError:
-                    pass
-
-    if not prices:
+        prices = from_table(soup)
+        if prices:
+            return prices
         text = clean(soup.get_text(" ", strip=True))
         prices = from_text(text)
-
-    return prices
-
-
+        if prices:
+            return prices
+        # Regex: "18 karat ... 900 kr" eller "18K ... 900 kr/g"
+        for m in re.finditer(
+            r"\b(\d{1,2})\s*[Kk](?:arat)?[^\d]{0,15}?([\d][\d\s]*(?:[.,]\d{1,2})?)\s*kr",
+            text, flags=re.IGNORECASE,
+        ):
+            key = KARAT_ALIASES.get(m.group(1))
+            if key and key not in prices:
+                try:
+                    val = to_float(m.group(2))
+                    if 50 < val < 10000:
+                        prices[key] = val
+                except ValueError:
+                    pass
+        if prices:
+            return prices
+    return {}
 # ── 14. Capitaurum ────────────────────────────────────────────────────────────
 def fetch_capitaurum() -> dict[str, float]:
     """
     Capitaurum visar priser på /salja-guld/ i en tabell med format:
-      "1 g Guld med finhalt 750/18k | 897.92kr"
+      "1 g Investeringsguld med finhalt 999/24k (ocirkulerat skick) 1,352.58kr"
+      "1 g Guld med finhalt 750/18k 963.28kr"
     Karathalten anges som finhalt (999/24k, 958/23k, 917/22k,
     875/21k, 750/18k, 585/14k, 375/9k).
+    OBS: priser ≥1000 har komma som tusenseparator: "1,352.58" = 1352.58 kr/g.
     """
-    # Finhalt → karat-mappning
     FINHALT_TO_KARAT = {
         "999": "24K", "958": "23K", "917": "22K",
         "875": "21K", "750": "18K", "585": "14K", "375": "9K",
@@ -500,20 +578,24 @@ def fetch_capitaurum() -> dict[str, float]:
     text = clean(soup.get_text(" ", strip=True))
     prices: dict[str, float] = {}
 
-    # Primär: "finhalt 750/18k ... 897.92kr" eller "750/18k ... 897,92 kr"
+    # Primär: "finhalt 999/24k ... 1,352.58kr" (komma = tusenseparator, punkt = decimal)
     for m in re.finditer(
-        r"(?:finhalt\s+)?(\d{3})/(\d{1,2})k[^\d]{0,30}?([\d][\d\s]*[.,]?\d{0,2})\s*kr",
+        r"finhalt\s+(\d{3})/\d+k[^\d]{0,50}?"
+        r"([\d]{1,4}(?:,\d{3})?(?:\.\d{1,2})?)\s*kr",
         text, flags=re.IGNORECASE,
     ):
         finhalt = m.group(1)
         key = FINHALT_TO_KARAT.get(finhalt)
-        if key and key not in prices:
-            try:
-                val = to_float(m.group(3))
-                if 100 < val < 10000:
-                    prices[key] = val
-            except ValueError:
-                pass
+        if not key or key in prices:
+            continue
+        # Ta bort tusenseparator (komma), behåll decimal (punkt)
+        price_str = m.group(2).replace(",", "")
+        try:
+            val = float(price_str)
+            if 100 < val < 10000:
+                prices[key] = round(val, 2)
+        except ValueError:
+            pass
 
     # Fallback: standardformat
     if not prices:
@@ -522,6 +604,46 @@ def fetch_capitaurum() -> dict[str, float]:
         prices = from_table(soup)
 
     return prices
+
+
+# ── 15. Tavex ────────────────────────────────────────────────────────────────────
+def fetch_tavex() -> dict[str, float]:
+    """
+    Tavex blockerar requests (403) – kräver Playwright med riktig user-agent.
+    Provar flera URL-varianter.
+    """
+    for url in [
+        "https://tavex.se/salja-guld/",
+        "https://tavex.se/guld-priser/",
+        "https://tavex.se/guld-silver-prislista/",
+        "https://tavex.se/",
+    ]:
+        soup = playwright_get(url)
+        if not soup:
+            continue
+        prices = from_table(soup)
+        if prices:
+            return prices
+        text = clean(soup.get_text(" ", strip=True))
+        prices = from_text(text)
+        if prices:
+            return prices
+        for m in re.finditer(
+            r"\b(\d{1,2})\s*[Kk](?:arat)?[^\d]{0,15}?([\d][\d\s]*(?:[.,]\d{1,2})?)\s*kr(?:/g|/gram)?",
+            text, flags=re.IGNORECASE,
+        ):
+            key = KARAT_ALIASES.get(m.group(1))
+            if key and key not in prices:
+                try:
+                    val = to_float(m.group(2))
+                    if 50 < val < 10000:
+                        prices[key] = val
+                except ValueError:
+                    pass
+        if prices:
+            return prices
+
+    return {}
 
 
 # ── Utskrift ──────────────────────────────────────────────────────────────────
@@ -565,6 +687,16 @@ def save_json(all_prices: dict[str, dict[str, float]], timestamp: datetime) -> N
 
     print(f"\n✓ Sparad: {filepath}")
 
+    # Notifiera API:et att ladda om senaste prisfil
+    try:
+        r = requests.get("http://localhost:8000/reload", timeout=5)
+        if r.status_code == 200:
+            print("✓ API uppdaterat med nya priser.")
+        else:
+            print(f"⚠️  API /reload svarade med status {r.status_code}.")
+    except Exception:
+        pass  # API kanske inte kör – tyst fel
+
 
 # ── Aktörer ───────────────────────────────────────────────────────────────────
 
@@ -585,6 +717,7 @@ AKTÖRER = [
     # ("Q Pantbank",         fetch_qpantbank),
     ("Guldfynd",           fetch_guldfynd),
     ("Capitaurum",         fetch_capitaurum),
+    # ("Tavex",              fetch_tavex),     # 403 överallt – blockerad
 ]
 
 

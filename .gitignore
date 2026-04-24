@@ -1,1 +1,10 @@
 saljguldet-9b2b64a5ba8a.json
+.env
+__pycache__/
+*.pyc
+venv/
+.venv/
+scraper.log
+api.log
+cloudflared.log
+Guldpriser/

@@ -1,46 +1,157 @@
-# ── Lägg till detta i din api.py ──────────────────────────────────────────────
+# api.py  –  Fungerar både lokalt och på Railway
 #
-# 1. Installera sendgrid:  pip install sendgrid
-#    Lägg till "sendgrid" i requirements.txt
-#
-# 2. Sätt miljövariabel i Railway:
-#    SENDGRID_API_KEY  = ditt SendGrid API-nyckel
-#    MAIL_FROM         = din avsändaradress (verifierad i SendGrid)
-#
-# 3. Klistra in importerna och koden nedan i din befintliga api.py
-# ─────────────────────────────────────────────────────────────────────────────
+# Lokalt:  bash run_api.sh   (läser .env-filen)
+# Railway: sätts upp via environment variables i Railway-dashboarden
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from pydantic import BaseModel, EmailStr
-import sys, os, uuid
+import sys, os, uuid, json, glob
 from datetime import datetime
 
-sys.path.append(os.path.dirname(__file__))
-from guldpris_scraper import AKTÖRER, KARAT_ORDER
+# Ladda .env-fil om den finns (för lokal körning)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from guldpris_scraper import AKTÖRER, KARAT_ORDER, save_json
 
 import sendgrid
 from sendgrid.helpers.mail import Mail
 
+import gspread
+from google.oauth2.service_account import Credentials
+
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 latest_prices: dict = {}
 
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
-MAIL_FROM        = os.environ.get("MAIL_FROM", "noreply@dittforetag.se")
+MAIL_FROM        = os.environ.get("MAIL_FROM", "noreply@saljguldet.se")
+GOOGLE_SHEET_ID  = os.environ.get("GOOGLE_SHEET_ID", "")
+
+# Absolut sökväg till mappen där JSON-filer sparas
+BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
+GULDPRISER_DIR  = os.path.join(BASE_DIR, "Guldpriser")
+
+
+# ── JSON-cache: ladda senaste sparade priser ──────────────────────────────────
+
+def ladda_senaste_json() -> bool:
+    """Laddar senaste sparade JSON-filen som latest_prices. Returnerar True om det lyckas."""
+    global latest_prices
+    pattern = os.path.join(GULDPRISER_DIR, "guldpriser_*.json")
+    filer = sorted(glob.glob(pattern))
+    if not filer:
+        return False
+    senaste = filer[-1]
+    try:
+        with open(senaste, encoding="utf-8") as f:
+            latest_prices = json.load(f)
+        print(f"[STARTUP] Laddade priser från: {os.path.basename(senaste)}")
+        return True
+    except Exception as e:
+        print(f"[FEL] Kunde inte läsa {senaste}: {e}")
+        return False
+
+
+# ── Scraper ───────────────────────────────────────────────────────────────────
+
+def kör_scraper():
+    global latest_prices
+    now = datetime.now()
+    print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
+    all_prices = {}
+    for name, fetcher in AKTÖRER:
+        try:
+            all_prices[name] = fetcher()
+        except Exception as e:
+            print(f"[FEL] {name}: {e}")
+            all_prices[name] = {}
+    latest_prices = {
+        "hämtad": now.strftime("%Y-%m-%d %H:%M"),
+        "priser": {
+            aktör: {
+                karat: priser[karat]
+                for karat in KARAT_ORDER
+                if karat in priser
+            }
+            for aktör, priser in all_prices.items()
+        },
+    }
+    # Spara till JSON-fil så att data finns kvar vid omstart av API:et
+    save_json(all_prices, now)
+    print("[SCRAPER] Klar!")
+
+
+# Vid start: ladda senaste sparade data (snabbt). Om ingen fil finns, kör scraper direkt.
+if not ladda_senaste_json():
+    print("[STARTUP] Ingen sparad data hittades – kör scraper nu (kan ta en stund)...")
+    kör_scraper()
+
+# Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
+scheduler = BackgroundScheduler()
+scheduler.add_job(kör_scraper, "interval", hours=1)
+scheduler.start()
 
 
 # ── Datamodell för order ──────────────────────────────────────────────────────
 
 class OrderRequest(BaseModel):
-    namn: str
-    email: EmailStr
+    # Fält som Lovable faktiskt skickar
+    fornamn: str | None = None
+    efternamn: str | None = None
+    epost: str | None = None          # Lovable använder "epost"
     telefon: str | None = None
-    karat: str              # t.ex. "18K"
-    vikt_gram: float        # kundens uppskattning
-    meddelande: str | None = None
+    karat: int | str | None = None    # Lovable skickar int (21), inte "21K"
+    gram: float | None = None         # Lovable använder "gram"
+    kopare: str | None = None         # vald köpare
+    totalPris: float | None = None
+    leveranssatt: str | None = None
+    personnummer: str | None = None
+    gata: str | None = None
+    postnummer: str | None = None
+    ort: str | None = None
+    kommentar: str | None = None
+    skapadAt: str | None = None
+
+    @property
+    def resolved_namn(self) -> str:
+        delar = [self.fornamn or "", self.efternamn or ""]
+        return " ".join(d for d in delar if d).strip() or "Okänd"
+
+    @property
+    def resolved_email(self) -> str:
+        return self.epost or ""
+
+    @property
+    def resolved_telefon(self) -> str | None:
+        return self.telefon
+
+    @property
+    def resolved_karat(self) -> str:
+        if isinstance(self.karat, int):
+            return f"{self.karat}K"
+        return str(self.karat) if self.karat else "okänt"
+
+    @property
+    def resolved_vikt(self) -> float:
+        return self.gram or 0.0
+
+    @property
+    def resolved_meddelande(self) -> str | None:
+        return self.kommentar
 
 
 # ── HTML-mailmall ─────────────────────────────────────────────────────────────
@@ -48,7 +159,7 @@ class OrderRequest(BaseModel):
 def bygg_mail_html(order_id: str, order: OrderRequest, pris_per_gram: float | None) -> str:
     pris_rad = ""
     if pris_per_gram:
-        uppskattat = round(pris_per_gram * order.vikt_gram, 2)
+        uppskattat = round(pris_per_gram * order.resolved_vikt, 2)
         pris_rad = f"""
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Dagspris ({order.karat})</td>
@@ -61,20 +172,20 @@ def bygg_mail_html(order_id: str, order: OrderRequest, pris_per_gram: float | No
         """
 
     meddelande_rad = ""
-    if order.meddelande:
+    if order.resolved_meddelande:
         meddelande_rad = f"""
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Ditt meddelande</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;font-style:italic;">{order.meddelande}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;font-style:italic;">{order.resolved_meddelande}</td>
         </tr>
         """
 
     telefon_rad = ""
-    if order.telefon:
+    if order.resolved_telefon:
         telefon_rad = f"""
         <tr>
           <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Telefon</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.telefon}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.resolved_telefon}</td>
         </tr>
         """
 
@@ -103,7 +214,7 @@ def bygg_mail_html(order_id: str, order: OrderRequest, pris_per_gram: float | No
         <!-- Intro -->
         <tr>
           <td style="padding:36px 40px 20px;">
-            <p style="margin:0 0 8px;font-size:22px;color:#2c2c2c;">Tack, {order.namn}!</p>
+            <p style="margin:0 0 8px;font-size:22px;color:#2c2c2c;">Tack, {order.resolved_namn}!</p>
             <p style="margin:0;font-size:15px;color:#555;line-height:1.6;">
               Vi har tagit emot din förfrågan och återkommer inom <strong>1 arbetsdag</strong> med ett slutgiltigt erbjudande.
               Nedan ser du en sammanfattning av din order.
@@ -122,20 +233,20 @@ def bygg_mail_html(order_id: str, order: OrderRequest, pris_per_gram: float | No
               </tr>
               <tr>
                 <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Namn</td>
-                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.namn}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.resolved_namn}</td>
               </tr>
               <tr>
                 <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">E-post</td>
-                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.email}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.resolved_email}</td>
               </tr>
               {telefon_rad}
               <tr>
                 <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Karat</td>
-                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.karat}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.resolved_karat}</td>
               </tr>
               <tr>
                 <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;color:#666;">Uppgiven vikt</td>
-                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.vikt_gram} gram</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #f0e6c8;">{order.resolved_vikt} gram</td>
               </tr>
               {pris_rad}
               {meddelande_rad}
@@ -166,8 +277,8 @@ def bygg_mail_html(order_id: str, order: OrderRequest, pris_per_gram: float | No
         <tr>
           <td style="padding:0 40px 36px;font-size:13px;color:#888;line-height:1.8;">
             <strong style="color:#555;">Frågor?</strong> Kontakta oss på
-            <a href="mailto:brjanssonp@gmail.com" style="color:#b8860b;">info@dittforetag.se</a>
-            eller ring <a href="tel:+46XXXXXXXX" style="color:#b8860b;">070-232 06 15</a>.
+            <a href="mailto:brjanssonp@gmail.com" style="color:#b8860b;">info@saljguldet.se</a>
+            eller ring <a href="tel:+46702320615" style="color:#b8860b;">070-232 06 15</a>.
           </td>
         </tr>
 
@@ -203,6 +314,72 @@ def hämta_dagspris(karat: str) -> float | None:
     return round(sum(värden) / len(värden), 2)
 
 
+# ── Google Sheets: logga order ───────────────────────────────────────────────
+
+_SHEET_SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
+_CREDENTIALS_FILE = os.path.join(BASE_DIR, "saljguldet-9b2b64a5ba8a.json")
+_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")  # Railway: hela JSON-strängen
+_SHEET_HEADER    = [
+    "Datum", "Order-ID", "Namn", "E-post", "Telefon",
+    "Karat", "Vikt (g)", "Dagspris (kr/g)", "Uppskattat värde (kr)",
+    "Köpare", "Personnummer", "Leveranssätt", "Gata", "Postnummer", "Ort",
+    "Kommentar", "Status"
+]
+
+def _get_worksheet():
+    """Öppnar första fliken i det konfigurerade Google Kalkylark.
+    Läser credentials från env var GOOGLE_CREDENTIALS_JSON (Railway)
+    eller från lokal fil (lokal körning)."""
+    if _CREDENTIALS_JSON:
+        # Railway: credentials som JSON-sträng i miljövariabel
+        import io
+        creds = Credentials.from_service_account_info(
+            json.loads(_CREDENTIALS_JSON), scopes=_SHEET_SCOPES
+        )
+    else:
+        # Lokalt: credentials från fil
+        creds = Credentials.from_service_account_file(_CREDENTIALS_FILE, scopes=_SHEET_SCOPES)
+    klient = gspread.Client(auth=creds)
+    return klient.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+def logga_order_i_sheet(order_id: str, order: OrderRequest, dagspris: float | None) -> None:
+    """Lägger till en ny rad i Google Kalkylark. Skapar rubrikrad om arket är tomt."""
+    if not GOOGLE_SHEET_ID:
+        print("[SHEETS] GOOGLE_SHEET_ID saknas – hoppar över loggning.")
+        return
+    try:
+        ws = _get_worksheet()
+        # Skapa rubrikrad om rad 1 kolumn A är tom
+        if not ws.acell("A1").value:
+            ws.update(values=[_SHEET_HEADER], range_name="A1")
+            ws.freeze(rows=1)
+
+        uppskattat = round(dagspris * order.resolved_vikt, 2) if dagspris else ""
+        rad = [
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            order_id,
+            order.resolved_namn,
+            order.resolved_email,
+            order.resolved_telefon or "",
+            order.resolved_karat,
+            order.resolved_vikt,
+            dagspris or "",
+            uppskattat,
+            order.kopare or "",
+            order.personnummer or "",
+            order.leveranssatt or "",
+            order.gata or "",
+            order.postnummer or "",
+            order.ort or "",
+            order.resolved_meddelande or "",
+            "Ny",
+        ]
+        ws.append_row(rad, value_input_option="USER_ENTERED")
+        print(f"[SHEETS] Order #{order_id} loggad i kalkylark.")
+    except Exception as e:
+        print(f"[SHEETS] Fel vid loggning av order: {e}")
+
+
 # ── Skicka mail via SendGrid ──────────────────────────────────────────────────
 
 def skicka_mail(till: str, namn: str, html: str, order_id: str) -> None:
@@ -222,72 +399,7 @@ def skicka_mail(till: str, namn: str, html: str, order_id: str) -> None:
         raise RuntimeError(f"SendGrid returnerade status {response.status_code}")
 
 
-# ── Endpoint ──────────────────────────────────────────────────────────────────
-
-@app.post("/order")
-def skicka_orderbekräftelse(order: OrderRequest):
-    """
-    Ta emot en order och skicka bekräftelsemail till kunden.
-
-    Exempel-body:
-    {
-      "namn": "Anna Svensson",
-      "email": "anna@exempel.se",
-      "telefon": "070-123 45 67",
-      "karat": "18K",
-      "vikt_gram": 12.5,
-      "meddelande": "Ringen har en liten diamant, spelar det roll?"
-    }
-    """
-    order_id = str(uuid.uuid4())[:8].upper()
-    dagspris = hämta_dagspris(order.karat)
-    html     = bygg_mail_html(order_id, order, dagspris)
-
-    try:
-        skicka_mail(order.email, order.namn, html, order_id)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {
-        "status":    "skickat",
-        "order_id":  order_id,
-        "dagspris":  dagspris,
-        "mottagare": order.email,
-    }
-
-
-# ── Scraper-delen (oförändrad) ────────────────────────────────────────────────
-
-def kör_scraper():
-    global latest_prices
-    now = datetime.now()
-    print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
-    all_prices = {}
-    for name, fetcher in AKTÖRER:
-        try:
-            all_prices[name] = fetcher()
-        except Exception as e:
-            print(f"[FEL] {name}: {e}")
-            all_prices[name] = {}
-    latest_prices = {
-        "hämtad": now.strftime("%Y-%m-%d %H:%M"),
-        "priser": {
-            aktör: {
-                karat: priser[karat]
-                for karat in KARAT_ORDER
-                if karat in priser
-            }
-            for aktör, priser in all_prices.items()
-        },
-    }
-    print("[SCRAPER] Klar!")
-
-
-kör_scraper()
-scheduler = BackgroundScheduler()
-scheduler.add_job(kör_scraper, "cron", hour="0,4,8,12,16,20", minute=0)
-scheduler.start()
-
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/priser")
 def get_priser():
@@ -296,6 +408,73 @@ def get_priser():
     return latest_prices
 
 
+@app.post("/order/debug")
+async def debug_order(request: Request):
+    """Temporär debug-endpoint – loggar exakt vad Lovable skickar."""
+    body = await request.body()
+    print(f"[DEBUG /order/debug] Raw body: {body.decode('utf-8', errors='replace')}")
+    return {"raw": body.decode("utf-8", errors="replace")}
+
+
+@app.post("/order")
+async def skicka_orderbekräftelse(request: Request):
+    # Logga råa bodyn för felsökning
+    body_bytes = await request.body()
+    body_str = body_bytes.decode("utf-8", errors="replace")
+    print(f"[ORDER] Raw body: {body_str}")
+
+    try:
+        data = json.loads(body_str)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Ogiltig JSON: {e}")
+
+    print(f"[ORDER] Parsed fields: {list(data.keys())}")
+
+    try:
+        order = OrderRequest(**data)
+    except Exception as e:
+        print(f"[ORDER] Valideringsfel: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
+
+    order_id = str(uuid.uuid4())[:8].upper()
+    dagspris = hämta_dagspris(order.resolved_karat)
+    html     = bygg_mail_html(order_id, order, dagspris)
+
+    # Skicka mail – fel här stoppar inte orderflödet
+    try:
+        skicka_mail(order.resolved_email, order.resolved_namn, html, order_id)
+    except Exception as e:
+        print(f"[MAIL] Kunde inte skicka mail: {e}")
+
+    # Logga order i Google Kalkylark
+    logga_order_i_sheet(order_id, order, dagspris)
+
+    return {
+        "status":    "skickat",
+        "order_id":  order_id,
+        "dagspris":  dagspris,
+        "mottagare": order.resolved_email,
+    }
+
+
+@app.get("/reload")
+def reload_priser():
+    """Läser in senaste sparade JSON-filen utan att starta om API:et."""
+    if ladda_senaste_json():
+        hämtad = latest_prices.get("hämtad", "okänd")
+        return {"status": "ok", "meddelande": f"Priser laddade om. Senaste: {hämtad}"}
+    raise HTTPException(status_code=404, detail="Ingen sparad prisfil hittades.")
+
+
 @app.get("/")
 def root():
-    return {"status": "ok", "info": "Gå till /priser för priser, POST /order för orderbekräftelse."}
+    hämtad = latest_prices.get("hämtad", "okänd")
+    return {
+        "status": "ok",
+        "priser_hämtade": hämtad,
+        "endpoints": {
+            "GET /priser": "Aktuella guldpriser",
+            "GET /reload": "Ladda om senaste prisfil utan omstart",
+            "POST /order": "Skicka orderbekräftelse"
+        }
+    }

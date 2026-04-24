@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python diag_sefina.py)",
+      "Bash(python -c ' *)",
+      "Bash(pip show *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import playwright_stealth; print\\(dir\\(playwright_stealth\\)\\)\")",
+      "Bash(python -m camoufox fetch)"
+    ]
+  }
+}
