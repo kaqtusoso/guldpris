@@ -587,6 +587,14 @@ scheduler.add_job(generera_veckans_artikel, "cron", day_of_week="mon", hour=8, m
 
 # ── Artikel-endpoints ─────────────────────────────────────────────────────────
 
+@app.get("/api/artiklar/generera")
+def trigga_artikelgenerering():
+    """Genererar nästa artikel manuellt. Samma logik som måndagsjobbet."""
+    import threading
+    threading.Thread(target=generera_veckans_artikel, daemon=True).start()
+    return {"status": "started", "meddelande": "Artikelgenerering körs i bakgrunden. Kolla Google Sheets om ~30 sekunder."}
+
+
 @app.get("/api/artiklar")
 def get_artiklar():
     """Returnerar alla publicerade artiklar."""
