@@ -102,7 +102,7 @@ if not ladda_senaste_json():
 
 # Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
 scheduler = BackgroundScheduler()
-scheduler.add_job(kör_scraper, "interval", minutes=30)
+scheduler.add_job(kör_scraper, "cron", minute="0,30")
 scheduler.start()
 
 
