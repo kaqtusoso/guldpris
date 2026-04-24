@@ -499,8 +499,26 @@ def reload_priser():
 # ── Artikelhantering – Google Sheets ─────────────────────────────────────────
 
 def _sätt_status_dropdown(spreadsheet, ws) -> None:
-    """Lägger till dropdown-validering på Status-kolumnen (F) i Artiklar-bladet."""
-    spreadsheet.batch_update({"requests": [{
+    """Dropdown + färgkodning på Status-kolumnen (F). Tar även bort kolumn H om den finns."""
+    headers = ws.row_values(1)
+
+    requests = []
+
+    # Ta bort kolumn H ("Publicerad") om den fortfarande finns
+    if len(headers) >= 8 and headers[7] == "Publicerad":
+        requests.append({
+            "deleteDimension": {
+                "range": {
+                    "sheetId": ws.id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 7,
+                    "endIndex": 8
+                }
+            }
+        })
+
+    # Dropdown-validering på kolumn F
+    requests.append({
         "setDataValidation": {
             "range": {
                 "sheetId": ws.id,
@@ -522,7 +540,35 @@ def _sätt_status_dropdown(spreadsheet, ws) -> None:
                 "strict": True
             }
         }
-    }]})
+    })
+
+    # Färgkodning: grön = Publicerad, röd = Utkast, gul = övriga värden
+    STATUS_RANGE = {"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 5, "endColumnIndex": 6}
+    requests += [
+        {"addConditionalFormatRule": {"index": 0, "rule": {
+            "ranges": [STATUS_RANGE],
+            "booleanRule": {
+                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Publicerad"}]},
+                "format": {"backgroundColor": {"red": 0.72, "green": 0.88, "blue": 0.56}}
+            }
+        }}},
+        {"addConditionalFormatRule": {"index": 1, "rule": {
+            "ranges": [STATUS_RANGE],
+            "booleanRule": {
+                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Utkast"}]},
+                "format": {"backgroundColor": {"red": 0.96, "green": 0.60, "blue": 0.60}}
+            }
+        }}},
+        {"addConditionalFormatRule": {"index": 2, "rule": {
+            "ranges": [STATUS_RANGE],
+            "booleanRule": {
+                "condition": {"type": "NOT_BLANK"},
+                "format": {"backgroundColor": {"red": 1.0, "green": 0.90, "blue": 0.45}}
+            }
+        }}},
+    ]
+
+    spreadsheet.batch_update({"requests": requests})
 
 
 def _get_artiklar_sheet():
@@ -537,7 +583,7 @@ def _get_artiklar_sheet():
         return spreadsheet.worksheet("Artiklar")
     except Exception:
         ws = spreadsheet.add_worksheet(title="Artiklar", rows=1000, cols=8)
-        ws.update(values=[["Slug","Titel","Meta-beskrivning","Nyckelord","Innehåll","Status","Skapad","Publicerad"]], range_name="A1")
+        ws.update(values=[["Slug","Titel","Meta-beskrivning","Nyckelord","Innehåll","Status","Skapad"]], range_name="A1")
         ws.freeze(rows=1)
         _sätt_status_dropdown(spreadsheet, ws)
         return ws
@@ -612,7 +658,7 @@ def spara_artikel(slug: str, nyckelord: str, artikel: dict) -> None:
             return
         nu = datetime.now(tz=STOCKHOLM).strftime("%Y-%m-%d %H:%M")
         ws.append_row([slug, artikel.get("titel",""), artikel.get("meta_beskrivning",""),
-                       nyckelord, artikel.get("innehall",""), "Utkast", nu, ""],
+                       nyckelord, artikel.get("innehall",""), "Utkast", nu],
                       value_input_option="USER_ENTERED")
         print(f"[ARTIKEL] Sparat som utkast: {artikel.get('titel', slug)}")
     except Exception as e:
@@ -675,7 +721,7 @@ def get_artiklar():
         rows = ws.get_all_records()
         return {"artiklar": [
             {"slug": r["Slug"], "titel": r["Titel"],
-             "meta_beskrivning": r["Meta-beskrivning"], "publicerad": r["Publicerad"]}
+             "meta_beskrivning": r["Meta-beskrivning"], "skapad": r.get("Skapad", "")}
             for r in rows if r.get("Status") == "Publicerad"
         ]}
     except Exception as e:
@@ -691,7 +737,7 @@ def get_artikel(slug: str):
             if r["Slug"] == slug and r.get("Status") == "Publicerad":
                 return {"slug": r["Slug"], "titel": r["Titel"],
                         "meta_beskrivning": r["Meta-beskrivning"],
-                        "innehall": r["Innehåll"], "publicerad": r["Publicerad"]}
+                        "innehall": r["Innehåll"], "skapad": r.get("Skapad", "")}
         raise HTTPException(status_code=404, detail="Artikel ej hittad")
     except HTTPException:
         raise
