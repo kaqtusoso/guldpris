@@ -125,7 +125,6 @@ if not ladda_senaste_json():
 # Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
 scheduler = BackgroundScheduler()
 scheduler.add_job(kör_scraper, "cron", minute="0,30")
-scheduler.add_job(generera_veckans_artikel, "cron", day_of_week="mon", hour=8, minute=0)
 scheduler.start()
 
 
@@ -580,6 +579,10 @@ def generera_veckans_artikel() -> None:
             spara_artikel(nästa["slug"], nästa["nyckelord"], artikel)
     except Exception as e:
         print(f"[ARTIKEL] Fel vid veckogenerering: {e}")
+
+
+# Schemalägg artikelgenerering varje måndag kl 08:00 (definieras här, efter att funktionen finns)
+scheduler.add_job(generera_veckans_artikel, "cron", day_of_week="mon", hour=8, minute=0)
 
 
 # ── Artikel-endpoints ─────────────────────────────────────────────────────────
