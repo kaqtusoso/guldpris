@@ -457,6 +457,14 @@ async def skicka_orderbekräftelse(request: Request):
     }
 
 
+@app.get("/scrape")
+def trigger_scraper():
+    """Kör scrapern manuellt och uppdaterar priserna direkt."""
+    import threading
+    threading.Thread(target=kör_scraper, daemon=True).start()
+    return {"status": "started", "meddelande": "Scrapern körs i bakgrunden. Priserna uppdateras inom ~2 minuter."}
+
+
 @app.get("/reload")
 def reload_priser():
     """Läser in senaste sparade JSON-filen utan att starta om API:et."""
