@@ -553,22 +553,39 @@ def generera_artikel(nyckelord: str) -> dict:
 
 Skriv en SEO-optimerad artikel på korrekt svenska om: "{nyckelord}"
 
+VIKTIGT – UNDVIK ÖVERLAPP MED BEFINTLIGA ARTIKLAR:
+Följande ämnen finns redan på sajten – skriv INTE om dessa, och undvik att upprepa deras kärninnehåll:
+- Sälja guld: tips för att få bästa pris (allmänna säljtips)
+- Vad är mitt guld värt? (beräkna värdet själv, formel för karat × vikt × pris)
+- Är det säkert att skicka guld med posten? (säkerhetspåse, försäkring, frakt)
+- Skillnaden mellan 9K, 14K, 18K och 24K guld (karatförklaring)
+- Sälja ärvda smycken (juridik, värdering, känslomässiga aspekter)
+- Sälja guldmynt och guldtackor (samlingsvärde vs metallvärde)
+- Hur värderar en guldköpare ditt guld? (värderingsprocessen)
+- Guldpris idag – hur du läser och förstår guldpriset (spotpris, svängningar)
+- 7 vanliga misstag när du säljer guld
+- Sälja guldtänder och tandguld
+
 SPRÅK OCH KVALITET (kritiskt):
-- Felfritt, naturligt och flytande svenska – inga stavfel, inga syftningsfel, inga konstiga meningsbyggnader
-- Läs igenom texten mentalt innan du skriver ut den – rätta eventuella fel
-- Använd korrekt terminologi: "finhalt" (inte "finkärt"), "guldköpare" (inte "arvodesjuveler"), osv.
+- Felfritt, naturligt och flytande svenska – inga stavfel, inga syftningsfel
+- Använd korrekt terminologi: "finhalt" (inte "finkärt"), rätt karatstandarder i Sverige: 9K (375‰), 14K (585‰), 18K (750‰), 24K (999‰)
 - Hjälpsam och informativ ton – inte säljig
 
 FORMATERING (kritiskt):
-- Använd alltid HTML-listor för punktlistor: <ul><li>punkt</li></ul> – aldrig •-tecken i löptext
+- Använd alltid HTML-listor: <ul><li>punkt</li></ul> – aldrig •-tecken i löptext
+- Separata <ul>-listor för fördelar respektive nackdelar – aldrig ihopblandade
 - Rubrikstruktur: en <h1>, sedan <h2> för varje avsnitt
 - Stycken med <p>-taggar
+
+CTA (kritiskt):
+- Läsaren befinner sig redan på Guldkollen.se – skriv ALDRIG "Besök Guldkollen.se" eller en URL
+- Hänvisa istället till verktyget på sidan, t.ex: "Använd jämförelseverktyget här på Guldkollen för att se vad just ditt guld är värt" eller "Scrolla upp och ange vikt och karat – du ser direkt vem som betalar mest"
+- CTA ska kännas naturlig och hjälpsam, inte som en annons
 
 INNEHÅLL:
 - 700–900 ord
 - Korrekt fakta om guldpriser och guldförsäljning i Sverige
-- Nämn Guldkollen.se naturligt som ett gratis verktyg för att jämföra guldpriser
-- Avsluta med en tydlig CTA som uppmuntrar till prisjämförelse på Guldkollen.se
+- Gör inte påståenden om specifika företags rykte eller recensioner som inte kan verifieras
 
 Returnera ENDAST giltig JSON utan markdown-kodblock, med exakt denna struktur:
 {{"titel": "H1-rubrik (60–70 tecken)", "meta_beskrivning": "Beskrivning för Google (max 155 tecken)", "innehall": "Hela artikeln som korrekt HTML"}}"""
