@@ -25,6 +25,7 @@ from guldpris_scraper import AKTÖRER, KARAT_ORDER, save_json
 
 import sendgrid
 from sendgrid.helpers.mail import Mail
+import anthropic
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -40,9 +41,27 @@ app.add_middleware(
 
 latest_prices: dict = {}
 
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
-MAIL_FROM        = os.environ.get("MAIL_FROM", "noreply@saljguldet.se")
-GOOGLE_SHEET_ID  = os.environ.get("GOOGLE_SHEET_ID", "")
+SENDGRID_API_KEY  = os.environ.get("SENDGRID_API_KEY", "")
+MAIL_FROM         = os.environ.get("MAIL_FROM", "noreply@saljguldet.se")
+GOOGLE_SHEET_ID   = os.environ.get("GOOGLE_SHEET_ID", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+PUBLISH_TOKEN     = os.environ.get("PUBLISH_TOKEN", "guldkollen2026")
+
+# ── Nyckelord för automatisk artikelgenerering (ett per vecka) ────────────────
+ARTIKEL_KEYWORDS = [
+    {"nyckelord": "sälja guld tips bästa pris",           "slug": "salja-guld-basta-pris"},
+    {"nyckelord": "guldbrev recension 2026",               "slug": "guldbrev-recension"},
+    {"nyckelord": "noblex omdöme guld",                    "slug": "noblex-omdome"},
+    {"nyckelord": "vad är guld värt per gram",             "slug": "vad-ar-guld-vart-per-gram"},
+    {"nyckelord": "sälja ärvda smycken guld",              "slug": "salja-arvda-smycken"},
+    {"nyckelord": "skillnad 14 karat 18 karat 24 karat",   "slug": "skillnad-karat-guld"},
+    {"nyckelord": "hur säljer man guld säkert",            "slug": "hur-saljer-man-guld"},
+    {"nyckelord": "bästa guldköpare sverige 2026",         "slug": "basta-guldkopare-sverige"},
+    {"nyckelord": "kaplans ädelmetall recension",          "slug": "kaplans-recension"},
+    {"nyckelord": "pantit guld recension",                 "slug": "pantit-recension"},
+    {"nyckelord": "sälja guld utan kvitto lagligt",        "slug": "salja-guld-utan-kvitto"},
+    {"nyckelord": "guldpris per gram historik Sverige",    "slug": "guldpris-historik"},
+]
 
 # Absolut sökväg till mappen där JSON-filer sparas
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
@@ -106,6 +125,7 @@ if not ladda_senaste_json():
 # Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
 scheduler = BackgroundScheduler()
 scheduler.add_job(kör_scraper, "cron", minute="0,30")
+scheduler.add_job(generera_veckans_artikel, "cron", day_of_week="mon", hour=8, minute=0)
 scheduler.start()
 
 
@@ -477,6 +497,125 @@ def reload_priser():
     raise HTTPException(status_code=404, detail="Ingen sparad prisfil hittades.")
 
 
+# ── Artikelhantering – Google Sheets ─────────────────────────────────────────
+
+def _get_artiklar_sheet():
+    """Öppnar eller skapar Artiklar-fliken i Google Kalkylark."""
+    if _CREDENTIALS_JSON:
+        creds = Credentials.from_service_account_info(json.loads(_CREDENTIALS_JSON), scopes=_SHEET_SCOPES)
+    else:
+        creds = Credentials.from_service_account_file(_CREDENTIALS_FILE, scopes=_SHEET_SCOPES)
+    klient = gspread.Client(auth=creds)
+    spreadsheet = klient.open_by_key(GOOGLE_SHEET_ID)
+    try:
+        return spreadsheet.worksheet("Artiklar")
+    except Exception:
+        ws = spreadsheet.add_worksheet(title="Artiklar", rows=1000, cols=8)
+        ws.update(values=[["Slug","Titel","Meta-beskrivning","Nyckelord","Innehåll","Status","Skapad","Publicerad"]], range_name="A1")
+        ws.freeze(rows=1)
+        return ws
+
+
+def generera_artikel(nyckelord: str) -> dict:
+    """Genererar en SEO-artikel på svenska med Claude API."""
+    if not ANTHROPIC_API_KEY:
+        print("[ARTIKEL] ANTHROPIC_API_KEY saknas – hoppar över generering.")
+        return {}
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    prompt = f"""Du är en SEO-skribent för Guldkollen.se – en svensk prisjämförelsetjänst för guldförsäljning.
+
+Skriv en SEO-optimerad artikel på svenska om: "{nyckelord}"
+
+Krav:
+- 650–900 ord
+- Hjälpsam och informativ ton – inte säljig
+- Nämn naturligt Guldkollen.se som ett gratis verktyg för att jämföra guldpriser
+- Avsluta med en CTA som uppmuntrar läsaren att jämföra priser på Guldkollen.se
+- Korrekt fakta om guldpriser och guldförsäljning i Sverige
+
+Returnera ENDAST giltig JSON (inga markdown-block) med denna struktur:
+{{"titel": "H1-rubrik", "meta_beskrivning": "Max 155 tecken", "innehall": "Hela artikeln som HTML med h1, h2, p-taggar"}}"""
+
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = message.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return json.loads(raw.strip())
+
+
+def spara_artikel(slug: str, nyckelord: str, artikel: dict) -> None:
+    """Sparar genererad artikel i Google Sheets som Utkast."""
+    try:
+        ws = _get_artiklar_sheet()
+        if slug in ws.col_values(1)[1:]:
+            print(f"[ARTIKEL] '{slug}' finns redan – hoppar över.")
+            return
+        nu = datetime.now(tz=STOCKHOLM).strftime("%Y-%m-%d %H:%M")
+        ws.append_row([slug, artikel.get("titel",""), artikel.get("meta_beskrivning",""),
+                       nyckelord, artikel.get("innehall",""), "Utkast", nu, ""],
+                      value_input_option="USER_ENTERED")
+        print(f"[ARTIKEL] Sparat som utkast: {artikel.get('titel', slug)}")
+    except Exception as e:
+        print(f"[ARTIKEL] Fel vid sparande: {e}")
+
+
+def generera_veckans_artikel() -> None:
+    """Väljer nästa nyckelord och genererar en artikel automatiskt."""
+    try:
+        ws = _get_artiklar_sheet()
+        befintliga = ws.col_values(1)[1:]
+        nästa = next((kw for kw in ARTIKEL_KEYWORDS if kw["slug"] not in befintliga), None)
+        if not nästa:
+            print("[ARTIKEL] Alla nyckelord är genererade.")
+            return
+        print(f"[ARTIKEL] Genererar artikel: {nästa['nyckelord']}")
+        artikel = generera_artikel(nästa["nyckelord"])
+        if artikel:
+            spara_artikel(nästa["slug"], nästa["nyckelord"], artikel)
+    except Exception as e:
+        print(f"[ARTIKEL] Fel vid veckogenerering: {e}")
+
+
+# ── Artikel-endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/api/artiklar")
+def get_artiklar():
+    """Returnerar alla publicerade artiklar."""
+    try:
+        ws = _get_artiklar_sheet()
+        rows = ws.get_all_records()
+        return {"artiklar": [
+            {"slug": r["Slug"], "titel": r["Titel"],
+             "meta_beskrivning": r["Meta-beskrivning"], "publicerad": r["Publicerad"]}
+            for r in rows if r.get("Status") == "Publicerad"
+        ]}
+    except Exception as e:
+        return {"artiklar": [], "fel": str(e)}
+
+
+@app.get("/api/artiklar/{slug}")
+def get_artikel(slug: str):
+    """Returnerar en specifik publicerad artikel."""
+    try:
+        ws = _get_artiklar_sheet()
+        for r in ws.get_all_records():
+            if r["Slug"] == slug and r.get("Status") == "Publicerad":
+                return {"slug": r["Slug"], "titel": r["Titel"],
+                        "meta_beskrivning": r["Meta-beskrivning"],
+                        "innehall": r["Innehåll"], "publicerad": r["Publicerad"]}
+        raise HTTPException(status_code=404, detail="Artikel ej hittad")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/robots.txt", response_class=Response)
 def robots():
     content = """User-agent: *
@@ -523,6 +662,21 @@ def sitemap():
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>""")
+
+    # Lägg till publicerade artiklar dynamiskt från Google Sheets
+    try:
+        ws = _get_artiklar_sheet()
+        for r in ws.get_all_records():
+            if r.get("Status") == "Publicerad":
+                pub = r.get("Publicerad", idag)[:10] if r.get("Publicerad") else idag
+                urls.append(f"""  <url>
+    <loc>https://guldkollen.se/artikel/{r['Slug']}</loc>
+    <lastmod>{pub}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>""")
+    except Exception as e:
+        print(f"[SITEMAP] Kunde inte hämta artiklar: {e}")
 
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
     xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
