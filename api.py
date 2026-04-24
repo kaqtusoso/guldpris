@@ -498,6 +498,33 @@ def reload_priser():
 
 # ── Artikelhantering – Google Sheets ─────────────────────────────────────────
 
+def _sätt_status_dropdown(spreadsheet, ws) -> None:
+    """Lägger till dropdown-validering på Status-kolumnen (F) i Artiklar-bladet."""
+    spreadsheet.batch_update({"requests": [{
+        "setDataValidation": {
+            "range": {
+                "sheetId": ws.id,
+                "startRowIndex": 1,
+                "startColumnIndex": 5,
+                "endColumnIndex": 6
+            },
+            "rule": {
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [
+                        {"userEnteredValue": "Utkast"},
+                        {"userEnteredValue": "Granskas"},
+                        {"userEnteredValue": "Publicerad"},
+                        {"userEnteredValue": "Avvisad"}
+                    ]
+                },
+                "showCustomUi": True,
+                "strict": True
+            }
+        }
+    }]})
+
+
 def _get_artiklar_sheet():
     """Öppnar eller skapar Artiklar-fliken i Google Kalkylark."""
     if _CREDENTIALS_JSON:
@@ -512,6 +539,7 @@ def _get_artiklar_sheet():
         ws = spreadsheet.add_worksheet(title="Artiklar", rows=1000, cols=8)
         ws.update(values=[["Slug","Titel","Meta-beskrivning","Nyckelord","Innehåll","Status","Skapad","Publicerad"]], range_name="A1")
         ws.freeze(rows=1)
+        _sätt_status_dropdown(spreadsheet, ws)
         return ws
 
 
@@ -521,23 +549,33 @@ def generera_artikel(nyckelord: str) -> dict:
         print("[ARTIKEL] ANTHROPIC_API_KEY saknas – hoppar över generering.")
         return {}
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = f"""Du är en SEO-skribent för Guldkollen.se – en svensk prisjämförelsetjänst för guldförsäljning.
+    prompt = f"""Du är en erfaren SEO-redaktör för Guldkollen.se – en svensk prisjämförelsetjänst för guldförsäljning.
 
-Skriv en SEO-optimerad artikel på svenska om: "{nyckelord}"
+Skriv en SEO-optimerad artikel på korrekt svenska om: "{nyckelord}"
 
-Krav:
-- 650–900 ord
+SPRÅK OCH KVALITET (kritiskt):
+- Felfritt, naturligt och flytande svenska – inga stavfel, inga syftningsfel, inga konstiga meningsbyggnader
+- Läs igenom texten mentalt innan du skriver ut den – rätta eventuella fel
+- Använd korrekt terminologi: "finhalt" (inte "finkärt"), "guldköpare" (inte "arvodesjuveler"), osv.
 - Hjälpsam och informativ ton – inte säljig
-- Nämn naturligt Guldkollen.se som ett gratis verktyg för att jämföra guldpriser
-- Avsluta med en CTA som uppmuntrar läsaren att jämföra priser på Guldkollen.se
-- Korrekt fakta om guldpriser och guldförsäljning i Sverige
 
-Returnera ENDAST giltig JSON (inga markdown-block) med denna struktur:
-{{"titel": "H1-rubrik", "meta_beskrivning": "Max 155 tecken", "innehall": "Hela artikeln som HTML med h1, h2, p-taggar"}}"""
+FORMATERING (kritiskt):
+- Använd alltid HTML-listor för punktlistor: <ul><li>punkt</li></ul> – aldrig •-tecken i löptext
+- Rubrikstruktur: en <h1>, sedan <h2> för varje avsnitt
+- Stycken med <p>-taggar
+
+INNEHÅLL:
+- 700–900 ord
+- Korrekt fakta om guldpriser och guldförsäljning i Sverige
+- Nämn Guldkollen.se naturligt som ett gratis verktyg för att jämföra guldpriser
+- Avsluta med en tydlig CTA som uppmuntrar till prisjämförelse på Guldkollen.se
+
+Returnera ENDAST giltig JSON utan markdown-kodblock, med exakt denna struktur:
+{{"titel": "H1-rubrik (60–70 tecken)", "meta_beskrivning": "Beskrivning för Google (max 155 tecken)", "innehall": "Hela artikeln som korrekt HTML"}}"""
 
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2500,
+        model="claude-sonnet-4-6",
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = message.content[0].text.strip()
@@ -586,6 +624,23 @@ scheduler.add_job(generera_veckans_artikel, "cron", day_of_week="mon", hour=8, m
 
 
 # ── Artikel-endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/api/artiklar/setup")
+def setup_artiklar_sheet():
+    """Applicerar dropdown-validering på befintligt Artiklar-blad."""
+    try:
+        if _CREDENTIALS_JSON:
+            creds = Credentials.from_service_account_info(json.loads(_CREDENTIALS_JSON), scopes=_SHEET_SCOPES)
+        else:
+            creds = Credentials.from_service_account_file(_CREDENTIALS_FILE, scopes=_SHEET_SCOPES)
+        klient = gspread.Client(auth=creds)
+        spreadsheet = klient.open_by_key(GOOGLE_SHEET_ID)
+        ws = spreadsheet.worksheet("Artiklar")
+        _sätt_status_dropdown(spreadsheet, ws)
+        return {"status": "ok", "meddelande": "Dropdown för Status-kolumnen är nu aktiv i Artiklar-bladet."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/artiklar/generera")
 def trigga_artikelgenerering():
