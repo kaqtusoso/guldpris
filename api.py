@@ -3,7 +3,7 @@
 # Lokalt:  bash run_api.sh   (läser .env-filen)
 # Railway: sätts upp via environment variables i Railway-dashboarden
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from pydantic import BaseModel, EmailStr
@@ -475,6 +475,60 @@ def reload_priser():
         hämtad = latest_prices.get("hämtad", "okänd")
         return {"status": "ok", "meddelande": f"Priser laddade om. Senaste: {hämtad}"}
     raise HTTPException(status_code=404, detail="Ingen sparad prisfil hittades.")
+
+
+@app.get("/robots.txt", response_class=Response)
+def robots():
+    content = """User-agent: *
+Allow: /
+Sitemap: https://guldkollen.se/sitemap.xml
+"""
+    return Response(content=content, media_type="text/plain")
+
+
+@app.get("/sitemap.xml", response_class=Response)
+def sitemap():
+    aktörer_slugs = [
+        ("guldbrev",        "Guldbrev"),
+        ("diamantbrev",     "Diamantbrev"),
+        ("pantit",          "Pantit"),
+        ("noblex",          "Noblex"),
+        ("finguld",         "Finguld"),
+        ("kaplans",         "Kaplans Ädelmetall"),
+        ("guldcentralen",   "Guldcentralen"),
+        ("pantbanken",      "Pantbanken"),
+        ("webbguld",        "WebbGuld"),
+        ("guldfynd",        "Guldfynd"),
+        ("capitaurum",      "Capitaurum"),
+    ]
+    idag = datetime.now(tz=STOCKHOLM).strftime("%Y-%m-%d")
+    urls = [
+        f"""  <url>
+    <loc>https://guldkollen.se/</loc>
+    <lastmod>{idag}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>1.0</priority>
+  </url>""",
+        f"""  <url>
+    <loc>https://guldkollen.se/guldpris-idag</loc>
+    <lastmod>{idag}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>""",
+    ]
+    for slug, _ in aktörer_slugs:
+        urls.append(f"""  <url>
+    <loc>https://guldkollen.se/{slug}</loc>
+    <lastmod>{idag}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>""")
+
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    xml += "\n".join(urls)
+    xml += "\n</urlset>"
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.get("/")

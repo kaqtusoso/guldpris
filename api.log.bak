@@ -21697,3 +21697,14 @@ INFO:     116.103.20.100:0 - "GET /priser HTTP/1.1" 200 OK
 INFO:     116.103.20.100:0 - "GET /priser HTTP/1.1" 200 OK
 INFO:     116.103.20.100:0 - "GET /priser HTTP/1.1" 200 OK
 INFO:     129.226.213.145:0 - "GET / HTTP/1.1" 200 OK
+INFO:     216.73.217.64:0 - "GET /robots.txt HTTP/1.1" 404 Not Found
+Run time of job "kör_scraper (trigger: cron[hour='0,4,8,12,16,20', minute='0'], next run at: 2026-04-24 20:00:00 +07)" was missed by 2:57:07.632635
+INFO:     216.73.216.69:0 - "GET /robots.txt HTTP/1.1" 404 Not Found
+  [INFO] Sefina: Cloudflare Bot Management blockerar automatisk hämtning.
+  [FEL] WebbGuld: HTTPSConnectionPool(host='webbguld.se', port=443): Read timed out. (read timeout=20)
+  [FEL] https://capitaurum.se/salja-guld/: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+[SCRAPER] Kör kl 00:00...
+
+✓ Sparad: Guldpriser/guldpriser_2026-04-25_00-00.json
+[STARTUP] Laddade priser från: guldpriser_2026-04-25_00-00.json
+INFO:     127.0.0.1:61770 - "GET /reload HTTP/1.1" 200 OK
