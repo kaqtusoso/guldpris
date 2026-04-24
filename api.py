@@ -9,6 +9,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from pydantic import BaseModel, EmailStr
 import sys, os, uuid, json, glob
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+STOCKHOLM = ZoneInfo("Europe/Stockholm")
 
 # Ladda .env-fil om den finns (för lokal körning)
 try:
@@ -70,7 +73,7 @@ def ladda_senaste_json() -> bool:
 
 def kör_scraper():
     global latest_prices
-    now = datetime.now()
+    now = datetime.now(tz=STOCKHOLM)
     print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
     all_prices = {}
     for name, fetcher in AKTÖRER:

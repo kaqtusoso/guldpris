@@ -14,6 +14,9 @@ import os
 import re
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+STOCKHOLM = ZoneInfo("Europe/Stockholm")
 
 import requests
 from bs4 import BeautifulSoup
@@ -722,7 +725,7 @@ AKTÖRER = [
 
 
 def main() -> None:
-    now = datetime.now()
+    now = datetime.now(tz=STOCKHOLM)
     print(f"Guldpriser  –  {now.strftime('%Y-%m-%d %H:%M')}")
 
     all_prices: dict[str, dict[str, float]] = {}
