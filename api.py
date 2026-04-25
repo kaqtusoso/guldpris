@@ -49,33 +49,34 @@ PUBLISH_TOKEN     = os.environ.get("PUBLISH_TOKEN", "guldkollen2026")
 
 # ── Nyckelord för automatisk artikelgenerering (ett per vecka) ────────────────
 ARTIKEL_KEYWORDS = [
-    # Befintliga
-    {"nyckelord": "sälja guld tips bästa pris",                         "slug": "salja-guld-basta-pris"},
-    {"nyckelord": "guldbrev recension 2026",                            "slug": "guldbrev-recension"},
-    {"nyckelord": "noblex omdöme guld",                                 "slug": "noblex-omdome"},
-    {"nyckelord": "vad är guld värt per gram",                          "slug": "vad-ar-guld-vart-per-gram"},
-    {"nyckelord": "sälja ärvda smycken guld",                           "slug": "salja-arvda-smycken"},
-    {"nyckelord": "skillnad 14 karat 18 karat 24 karat",                "slug": "skillnad-karat-guld"},
-    {"nyckelord": "hur säljer man guld säkert",                         "slug": "hur-saljer-man-guld"},
-    {"nyckelord": "bästa guldköpare sverige 2026",                      "slug": "basta-guldkopare-sverige"},
-    {"nyckelord": "kaplans ädelmetall recension",                       "slug": "kaplans-recension"},
-    {"nyckelord": "pantit guld recension",                              "slug": "pantit-recension"},
-    {"nyckelord": "sälja guld utan kvitto lagligt",                     "slug": "salja-guld-utan-kvitto"},
-    {"nyckelord": "guldpris per gram historik Sverige",                 "slug": "guldpris-historik"},
-    # Nya
-    {"nyckelord": "finguld recension 2026",                             "slug": "finguld-recension"},
-    {"nyckelord": "guldcentralen omdöme och recension",                 "slug": "guldcentralen-recension"},
-    {"nyckelord": "webbguld recension 2026",                            "slug": "webbguld-recension"},
-    {"nyckelord": "diamantbrev recension guld",                         "slug": "diamantbrev-recension"},
-    {"nyckelord": "pantbanken guld recension",                          "slug": "pantbanken-recension"},
-    {"nyckelord": "capitaurum recension 2026",                          "slug": "capitaurum-recension"},
-    {"nyckelord": "guldfynd recension 2026",                            "slug": "guldfynd-recension"},
-    {"nyckelord": "sälja silversmycken bästa pris Sverige",             "slug": "salja-silversmycken"},
-    {"nyckelord": "hur lång tid tar det att sälja guld via post",       "slug": "hur-lang-tid-salja-guld"},
-    {"nyckelord": "sälja guld kontant eller banköverföring",            "slug": "salja-guld-betalning"},
-    {"nyckelord": "sälja guld efter dödsfall och bouppteckning",        "slug": "salja-guld-dodsfall"},
-    {"nyckelord": "guldpris prognos och framtidsutsikter 2026",         "slug": "guldpris-prognos-2026"},
-    {"nyckelord": "vad händer med ditt guld efter försäljning",         "slug": "vad-hander-med-guldet"},
+    # Redan genererade – rör inte
+    {"nyckelord": "sälja guld tips bästa pris",                                        "slug": "salja-guld-basta-pris"},
+    {"nyckelord": "guldbrev recension 2026",                                           "slug": "guldbrev-recension"},
+    # Köparrecensioner
+    {"nyckelord": "noblex omdöme guld",                                                "slug": "noblex-omdome"},
+    {"nyckelord": "hur säljer man guld säkert",                                        "slug": "hur-saljer-man-guld"},
+    {"nyckelord": "bästa guldköpare sverige 2026",                                     "slug": "basta-guldkopare-sverige"},
+    {"nyckelord": "kaplans ädelmetall recension",                                      "slug": "kaplans-recension"},
+    {"nyckelord": "pantit guld recension",                                             "slug": "pantit-recension"},
+    {"nyckelord": "finguld recension 2026",                                            "slug": "finguld-recension"},
+    {"nyckelord": "guldcentralen omdöme och recension",                                "slug": "guldcentralen-recension"},
+    {"nyckelord": "webbguld recension 2026",                                           "slug": "webbguld-recension"},
+    {"nyckelord": "diamantbrev recension guld",                                        "slug": "diamantbrev-recension"},
+    {"nyckelord": "pantbanken guld recension",                                         "slug": "pantbanken-recension"},
+    {"nyckelord": "capitaurum recension 2026",                                         "slug": "capitaurum-recension"},
+    {"nyckelord": "guldfynd recension 2026",                                           "slug": "guldfynd-recension"},
+    # Kontroversiella frågor med hög sökintention
+    {"nyckelord": "måste jag betala skatt när jag säljer guld i Sverige",              "slug": "skatt-salja-guld"},
+    {"nyckelord": "kan guldköpare lura dig – vad du ska se upp med",                  "slug": "guldkopare-lura-dig"},
+    {"nyckelord": "varför betalar guldköpare så olika mycket för samma guld",          "slug": "varfor-olika-pris-guld"},
+    {"nyckelord": "är det lagligt att sälja guld anonymt i Sverige",                   "slug": "salja-guld-anonymt"},
+    {"nyckelord": "kan guldköpare neka att betala efter värdering",                    "slug": "neka-betala-efter-vardering"},
+    {"nyckelord": "hur vet jag att guldköparen inte fuskar med vikten",                "slug": "guldkopare-fuskar-vikt"},
+    {"nyckelord": "vad är rimlig marginal hos en guldköpare",                          "slug": "rimlig-marginal-guldkopare"},
+    {"nyckelord": "varför får jag så lite betalt för mitt guld",                       "slug": "varfor-lite-betalt-guld"},
+    {"nyckelord": "kan jag ångra mig efter att ha sålt guld",                          "slug": "angra-salja-guld"},
+    {"nyckelord": "sälja guld utan kvitto – är det lagligt",                           "slug": "salja-guld-utan-kvitto"},
+    {"nyckelord": "sälja guld efter dödsfall och bouppteckning",                       "slug": "salja-guld-dodsfall"},
 ]
 
 # Absolut sökväg till mappen där JSON-filer sparas
