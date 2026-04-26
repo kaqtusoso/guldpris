@@ -3,6 +3,15 @@
 # Lokalt:  bash run_api.sh   (läser .env-filen)
 # Railway: sätts upp via environment variables i Railway-dashboarden
 
+# ── TILLFÄLLIGA HÅRDKODADE PRISER (för mockup-bilder) ────────────────────────
+# Ta bort / sätt till {} när riktiga priser ska visas igen.
+HARDCODED_OVERRIDES: dict[str, dict[str, float]] = {
+    "Noblex":      {"24K": 1400},
+    "Capitaurum":  {"24K": 1335},
+    "WebbGuld":    {"24K": 1310},
+}
+# ─────────────────────────────────────────────────────────────────────────────
+
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -443,6 +452,15 @@ def skicka_mail(till: str, namn: str, html: str, order_id: str) -> None:
 def get_priser():
     if not latest_prices:
         return {"error": "Inga priser hittades ännu."}
+    # Applicera tillfälliga hårdkodade priser (ta bort HARDCODED_OVERRIDES när ej längre behövs)
+    if HARDCODED_OVERRIDES:
+        import copy
+        result = copy.deepcopy(latest_prices)
+        for aktör, karat_priser in HARDCODED_OVERRIDES.items():
+            if aktör not in result.get("priser", {}):
+                result["priser"][aktör] = {}
+            result["priser"][aktör].update(karat_priser)
+        return result
     return latest_prices
 
 
