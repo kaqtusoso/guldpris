@@ -452,39 +452,54 @@ def fetch_webbguld() -> dict[str, float]:
                     prices[k] = float(m2.group(1))
         return prices
 
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        resp = requests.get("https://webbguld.se/salja-guld", headers=headers, timeout=20)
-        print(f"  [WebbGuld] HTTP {resp.status_code}, {len(resp.text)} tecken", file=sys.stderr)
-        resp.raise_for_status()
-        soup_wg = BeautifulSoup(resp.text, "html.parser")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
 
-        js_content = ""
-        for script in soup_wg.find_all("script"):
-            content = script.string or ""
-            if "price24" in content and "price18" in content and "change(" in content:
-                js_content = content
-                break
+    js_content = ""
+    for attempt in range(1, 4):  # 3 försök med 5s mellanrum
+        try:
+            resp = requests.get("https://webbguld.se/salja-guld", headers=headers, timeout=20)
+            print(f"  [WebbGuld] Försök {attempt}: HTTP {resp.status_code}, {len(resp.text)} tecken", file=sys.stderr)
+            resp.raise_for_status()
+            soup_wg = BeautifulSoup(resp.text, "html.parser")
 
-        if not js_content:
-            # Logga varför vi misslyckades
+            for script in soup_wg.find_all("script"):
+                content = script.string or ""
+                if "price24" in content and "price18" in content and "change(" in content:
+                    js_content = content
+                    break
+
+            if js_content:
+                break  # Lyckades – avbryt retry-loopen
+
+            # JS-blocket saknas – logga och försök igen
             script_contents = [s.string or "" for s in soup_wg.find_all("script")]
             has_price24 = any("price24" in c for c in script_contents)
             has_price18 = any("price18" in c for c in script_contents)
             has_change  = any("change(" in c for c in script_contents)
             print(
-                f"  [WebbGuld] JS-block saknas – price24={has_price24}, "
-                f"price18={has_price18}, change()={has_change}, "
-                f"antal scripts={len(script_contents)}",
+                f"  [WebbGuld] Försök {attempt}: JS-block saknas – "
+                f"price24={has_price24}, price18={has_price18}, change()={has_change}, "
+                f"scripts={len(script_contents)}",
                 file=sys.stderr,
             )
-            return {}
+            if attempt < 3:
+                import time; time.sleep(5)
+
+        except Exception as exc:
+            print(f"  [FEL] WebbGuld försök {attempt}: {exc}", file=sys.stderr)
+            if attempt < 3:
+                import time; time.sleep(5)
+
+    if not js_content:
+        return {}
+
+    try:
 
         result: dict[str, float] = {}
 
