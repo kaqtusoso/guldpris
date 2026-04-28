@@ -517,19 +517,28 @@ def debug_webbguld():
         )
     }
     try:
+        import re as _re
         resp = _req.get(url, headers=headers, timeout=20)
         soup = _BS(resp.text, "html.parser")
         scripts = [s.string or "" for s in soup.find_all("script")]
         js_block = next((c for c in scripts if "price24" in c and "price18" in c and "change(" in c), None)
+
+        # Extrahera faktiska priser direkt ur JS-blocket
+        råpriser = {}
+        if js_block:
+            for karat in ["8", "9", "10", "14", "18", "20", "21", "22", "23", "24"]:
+                m = _re.search(rf"price{karat}\s*=\s*([\d.]+)", js_block)
+                if m:
+                    råpriser[f"{karat}K"] = float(m.group(1))
+
         return {
             "status_code": resp.status_code,
             "svar_längd": len(resp.text),
-            "antal_scripts": len(scripts),
             "js_block_hittat": js_block is not None,
             "js_block_längd": len(js_block) if js_block else 0,
-            "price24_i_js": bool(js_block and "price24 =" in js_block),
-            "title": (soup.find("title") or {}).get_text("") if soup.find("title") else None,
-            "första_200_tecken": resp.text[:200],
+            "råpriser_från_js": råpriser,
+            "priser_efter_filter": {k: v for k, v in råpriser.items() if 50 < v < 10000},
+            "title": soup.find("title").get_text("") if soup.find("title") else None,
         }
     except Exception as e:
         return {"fel": str(e)}
