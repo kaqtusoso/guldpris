@@ -461,6 +461,7 @@ def fetch_webbguld() -> dict[str, float]:
             )
         }
         resp = requests.get("https://webbguld.se/salja-guld", headers=headers, timeout=20)
+        print(f"  [WebbGuld] HTTP {resp.status_code}, {len(resp.text)} tecken", file=sys.stderr)
         resp.raise_for_status()
         soup_wg = BeautifulSoup(resp.text, "html.parser")
 
@@ -472,6 +473,17 @@ def fetch_webbguld() -> dict[str, float]:
                 break
 
         if not js_content:
+            # Logga varför vi misslyckades
+            script_contents = [s.string or "" for s in soup_wg.find_all("script")]
+            has_price24 = any("price24" in c for c in script_contents)
+            has_price18 = any("price18" in c for c in script_contents)
+            has_change  = any("change(" in c for c in script_contents)
+            print(
+                f"  [WebbGuld] JS-block saknas – price24={has_price24}, "
+                f"price18={has_price18}, change()={has_change}, "
+                f"antal scripts={len(script_contents)}",
+                file=sys.stderr,
+            )
             return {}
 
         result: dict[str, float] = {}
@@ -496,7 +508,9 @@ def fetch_webbguld() -> dict[str, float]:
                         result[label] = price
                 break
 
-        return {k: v for k, v in result.items() if 50 < v < 10000}
+        final = {k: v for k, v in result.items() if 50 < v < 10000}
+        print(f"  [WebbGuld] Hämtade {len(final)} karat: {list(final.keys())}", file=sys.stderr)
+        return final
 
     except Exception as exc:
         print(f"  [FEL] WebbGuld: {exc}", file=sys.stderr)

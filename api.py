@@ -503,6 +503,38 @@ def trigger_scraper():
     return {"status": "started", "meddelande": "Scrapern körs i bakgrunden. Priserna uppdateras inom ~2 minuter."}
 
 
+@app.get("/debug/webbguld")
+def debug_webbguld():
+    """Diagnostik: hämtar rådata från WebbGuld och visar vad Railway faktiskt ser."""
+    import requests as _req
+    from bs4 import BeautifulSoup as _BS
+    url = "https://webbguld.se/salja-guld"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        resp = _req.get(url, headers=headers, timeout=20)
+        soup = _BS(resp.text, "html.parser")
+        scripts = [s.string or "" for s in soup.find_all("script")]
+        js_block = next((c for c in scripts if "price24" in c and "price18" in c and "change(" in c), None)
+        return {
+            "status_code": resp.status_code,
+            "svar_längd": len(resp.text),
+            "antal_scripts": len(scripts),
+            "js_block_hittat": js_block is not None,
+            "js_block_längd": len(js_block) if js_block else 0,
+            "price24_i_js": bool(js_block and "price24 =" in js_block),
+            "title": (soup.find("title") or {}).get_text("") if soup.find("title") else None,
+            "första_200_tecken": resp.text[:200],
+        }
+    except Exception as e:
+        return {"fel": str(e)}
+
+
 @app.get("/reload")
 def reload_priser():
     """Läser in senaste sparade JSON-filen utan att starta om API:et."""
