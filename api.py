@@ -847,35 +847,33 @@ Sitemap: https://guldkollen.se/sitemap.xml
 @app.get("/sitemap.xml", response_class=Response)
 def sitemap():
     aktörer_slugs = [
-        ("guldbrev",        "Guldbrev"),
-        ("diamantbrev",     "Diamantbrev"),
-        ("pantit",          "Pantit"),
-        ("noblex",          "Noblex"),
-        ("finguld",         "Finguld"),
-        ("kaplans",         "Kaplans Ädelmetall"),
-        ("guldcentralen",   "Guldcentralen"),
-        ("pantbanken",      "Pantbanken"),
-        ("webbguld",        "WebbGuld"),
-        ("guldfynd",        "Guldfynd"),
-        ("capitaurum",      "Capitaurum"),
-        ("smsguld",         "SMSGuld"),
+        "guldbrev", "diamantbrev", "pantit", "noblex", "finguld",
+        "kaplans", "guldcentralen", "pantbanken", "webbguld",
+        "guldfynd", "capitaurum", "smsguld",
     ]
+    karat_slugs = ["14k", "18k"]
     idag = datetime.now(tz=STOCKHOLM).strftime("%Y-%m-%d")
-    urls = [
-        f"""  <url>
-    <loc>https://guldkollen.se/</loc>
-    <lastmod>{idag}</lastmod>
-    <changefreq>hourly</changefreq>
-    <priority>1.0</priority>
-  </url>""",
-        f"""  <url>
-    <loc>https://guldkollen.se/guldpris-idag</loc>
-    <lastmod>{idag}</lastmod>
-    <changefreq>hourly</changefreq>
-    <priority>0.9</priority>
-  </url>""",
+
+    urls = []
+
+    # Statiska sidor
+    statiska = [
+        ("https://guldkollen.se/",             "hourly",  "1.0"),
+        ("https://guldkollen.se/guldpris-idag", "hourly",  "0.9"),
+        ("https://guldkollen.se/artiklar",      "daily",   "0.8"),
+        ("https://guldkollen.se/om-oss",        "monthly", "0.5"),
+        ("https://guldkollen.se/resultat",      "daily",   "0.7"),
     ]
-    for slug, _ in aktörer_slugs:
+    for loc, freq, prio in statiska:
+        urls.append(f"""  <url>
+    <loc>{loc}</loc>
+    <lastmod>{idag}</lastmod>
+    <changefreq>{freq}</changefreq>
+    <priority>{prio}</priority>
+  </url>""")
+
+    # Köparsidor (12 st)
+    for slug in aktörer_slugs:
         urls.append(f"""  <url>
     <loc>https://guldkollen.se/{slug}</loc>
     <lastmod>{idag}</lastmod>
@@ -883,7 +881,17 @@ def sitemap():
     <priority>0.8</priority>
   </url>""")
 
-    # Lägg till publicerade artiklar dynamiskt från Google Sheets
+    # Köpare + karat (24 st: 12 × 2)
+    for slug in aktörer_slugs:
+        for karat in karat_slugs:
+            urls.append(f"""  <url>
+    <loc>https://guldkollen.se/{slug}/{karat}</loc>
+    <lastmod>{idag}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>""")
+
+    # Artiklar – hämtas dynamiskt från Google Sheets
     try:
         ws = _get_artiklar_sheet()
         for r in ws.get_all_records():
