@@ -638,7 +638,54 @@ def fetch_capitaurum() -> dict[str, float]:
     return prices
 
 
-# ── 15. Tavex ────────────────────────────────────────────────────────────────────
+# ── 15. SMSGuld ───────────────────────────────────────────────────────────────
+def fetch_smsguld() -> dict[str, float]:
+    """
+    SMSGuld har priserna hårdkodade i ett JS-objekt (karatPrices) på startsidan.
+    Faktiskt utbetalt pris beräknas med samma logik som sajten:
+      24K:    basePrice × 0.95
+      Övriga: basePrice × 0.85 × 1.10
+    Stödda karat: 14K, 18K, 22K, 24K.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        resp = requests.get("https://www.smsguld.se", headers=headers, timeout=20)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"  [FEL] SMSGuld: {exc}", file=sys.stderr)
+        return {}
+
+    # Hitta: const karatPrices = { '24': 1447.35, '22': 1326.74, ... };
+    block = re.search(r"const\s+karatPrices\s*=\s*\{([^}]+)\}", resp.text)
+    if not block:
+        print("  [FEL] SMSGuld: karatPrices-blocket hittades inte.", file=sys.stderr)
+        return {}
+
+    prices: dict[str, float] = {}
+    for entry in re.finditer(r"'(\d+)'\s*:\s*([\d.]+)", block.group(1)):
+        karat_num = entry.group(1)
+        base = float(entry.group(2))
+        key = KARAT_ALIASES.get(karat_num)
+        if not key:
+            continue
+        if karat_num == "24":
+            final = round(base * 0.95, 2)
+        else:
+            final = round(base * 0.85 * 1.10, 2)
+        if 50 < final < 10000:
+            prices[key] = final
+
+    print(f"  [SMSGuld] Hämtade {len(prices)} karat: {list(prices.keys())}", file=sys.stderr)
+    return prices
+
+
+# ── 16. Tavex ────────────────────────────────────────────────────────────────────
 def fetch_tavex() -> dict[str, float]:
     """
     Tavex blockerar requests (403) – kräver Playwright med riktig user-agent.
@@ -749,6 +796,7 @@ AKTÖRER = [
     # ("Q Pantbank",         fetch_qpantbank),
     ("Guldfynd",           fetch_guldfynd),
     ("Capitaurum",         fetch_capitaurum),
+    ("SMSGuld",            fetch_smsguld),
     # ("Tavex",              fetch_tavex),     # 403 överallt – blockerad
 ]
 

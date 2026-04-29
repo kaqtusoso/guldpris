@@ -825,6 +825,7 @@ def sitemap():
         ("webbguld",        "WebbGuld"),
         ("guldfynd",        "Guldfynd"),
         ("capitaurum",      "Capitaurum"),
+        ("smsguld",         "SMSGuld"),
     ]
     idag = datetime.now(tz=STOCKHOLM).strftime("%Y-%m-%d")
     urls = [
