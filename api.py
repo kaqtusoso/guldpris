@@ -110,13 +110,32 @@ def kör_scraper():
     global latest_prices
     now = datetime.now(tz=STOCKHOLM)
     print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
+
+    # Spara senast kända priser som fallback om en scraper misslyckas
+    cached = latest_prices.get("priser", {})
+
     all_prices = {}
     for name, fetcher in AKTÖRER:
         try:
-            all_prices[name] = fetcher()
+            result = fetcher()
+            if result:
+                all_prices[name] = result
+            else:
+                # Scraper returnerade tomt – använd senast kända priser
+                fallback = cached.get(name, {})
+                if fallback:
+                    print(f"[FALLBACK] {name}: använder senaste kända priser ({list(fallback.keys())})", flush=True)
+                    all_prices[name] = fallback
+                else:
+                    all_prices[name] = {}
         except Exception as e:
             print(f"[FEL] {name}: {e}")
-            all_prices[name] = {}
+            fallback = cached.get(name, {})
+            if fallback:
+                print(f"[FALLBACK] {name}: använder senaste kända priser efter fel", flush=True)
+                all_prices[name] = fallback
+            else:
+                all_prices[name] = {}
     latest_prices = {
         "hämtad": now.strftime("%Y-%m-%d %H:%M"),
         "priser": {
