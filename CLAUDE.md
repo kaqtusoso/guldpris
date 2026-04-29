@@ -14,6 +14,13 @@ Se full analys: memory/audience/målgrupp.md
 | Namn | Vad |
 |------|-----|
 | **Guldkollen.se** | Prisjämförelse guldköpare Sverige, nystart |
+| **Google Ads** | Aktiv kampanj sedan 28 april 2026 – se memory/marketing/google-ads-kampanj.md |
+
+## Teknisk infrastruktur
+- **Railway API:** https://web-production-5273.up.railway.app/
+  - `/priser` – hämtar aktuella priser
+  - `/scrape` – triggar manuell scrape
+  - `/debug/webbguld` – diagnostik för WebbGuld
 
 ## Marknadsföring
 - Kanal 1: **Facebook/Meta** (cold audience, emotionellt driven)
@@ -22,6 +29,10 @@ Se full analys: memory/audience/målgrupp.md
 
 ## Konkurrenter
 Guldbrev, Noblex, Guldcentralen, Kaplans, Finguld, Guldexperten, Svenska Guld, Tavex
+
+## SEO
+- Ca 10 artiklar publicerade (april 2026)
+- Bot genererar 2 nya artiklar per vecka med relevanta sökord
 
 ## Preferenser
 - Pascal vill alltid ha annonser kopplade till medvetandetrappan
