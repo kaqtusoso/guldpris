@@ -21,7 +21,7 @@ except ImportError:
     pass
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from guldpris_scraper import AKTÖRER, KARAT_ORDER, save_json
+from guldpris_scraper import AKTÖRER, AKTÖRER_SNABB, AKTÖRER_PLAYWRIGHT, KARAT_ORDER, save_json
 
 import sendgrid
 from sendgrid.helpers.mail import Mail
@@ -106,22 +106,23 @@ def ladda_senaste_json() -> bool:
 
 # ── Scraper ───────────────────────────────────────────────────────────────────
 
-def kör_scraper():
+def _kör_aktörer(aktörer: list, label: str) -> None:
+    """Kör en delmängd aktörer, mergar in resultaten i latest_prices och sparar JSON."""
     global latest_prices
     now = datetime.now(tz=STOCKHOLM)
-    print(f"[SCRAPER] Kör kl {now.strftime('%H:%M')}...")
+    print(f"[SCRAPER-{label}] Kör kl {now.strftime('%H:%M')}...")
 
-    # Spara senast kända priser som fallback om en scraper misslyckas
     cached = latest_prices.get("priser", {})
 
-    all_prices = {}
-    for name, fetcher in AKTÖRER:
+    # Starta med alla befintliga priser så att oberörda aktörer behålls
+    all_prices = dict(cached)
+
+    for name, fetcher in aktörer:
         try:
             result = fetcher()
             if result:
                 all_prices[name] = result
             else:
-                # Scraper returnerade tomt – använd senast kända priser
                 fallback = cached.get(name, {})
                 if fallback:
                     print(f"[FALLBACK] {name}: använder senaste kända priser ({list(fallback.keys())})", flush=True)
@@ -136,30 +137,43 @@ def kör_scraper():
                 all_prices[name] = fallback
             else:
                 all_prices[name] = {}
+
     latest_prices = {
         "hämtad": now.strftime("%Y-%m-%d %H:%M"),
         "priser": {
-            aktör: {
-                karat: priser[karat]
-                for karat in KARAT_ORDER
-                if karat in priser
-            }
+            aktör: {karat: priser[karat] for karat in KARAT_ORDER if karat in priser}
             for aktör, priser in all_prices.items()
         },
     }
-    # Spara till JSON-fil så att data finns kvar vid omstart av API:et
     save_json(all_prices, now)
-    print("[SCRAPER] Klar!")
+    print(f"[SCRAPER-{label}] Klar!")
 
 
-# Vid start: ladda senaste sparade data (snabbt). Om ingen fil finns, kör scraper direkt.
+def kör_scraper():
+    """Kör alla aktörer (används vid manuell /scrape och lokal körning)."""
+    _kör_aktörer(AKTÖRER, "FULL")
+
+
+def kör_scraper_snabb():
+    """Kör requests-baserade aktörer – var 5:e minut."""
+    _kör_aktörer(AKTÖRER_SNABB, "SNABB")
+
+
+def kör_scraper_playwright():
+    """Kör Playwright-aktörer – var 30:e minut."""
+    _kör_aktörer(AKTÖRER_PLAYWRIGHT, "PLAYWRIGHT")
+
+
+# Vid start: ladda senaste sparade data (snabbt).
+# Om ingen fil finns, kör snabb-scrapern direkt (Playwright körs sedan vid nästa 30-minutersintervall).
 if not ladda_senaste_json():
-    print("[STARTUP] Ingen sparad data hittades – kör scraper nu (kan ta en stund)...")
-    kör_scraper()
+    print("[STARTUP] Ingen sparad data hittades – kör snabb-scraper nu...")
+    kör_scraper_snabb()
 
 # Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
 scheduler = BackgroundScheduler()
-scheduler.add_job(kör_scraper, "cron", minute="0,30")
+scheduler.add_job(kör_scraper_snabb,      "cron", minute="*/5")   # var 5:e minut
+scheduler.add_job(kör_scraper_playwright, "cron", minute="0,30")  # var 30:e minut
 scheduler.start()
 
 

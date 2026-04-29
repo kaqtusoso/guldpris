@@ -779,26 +779,31 @@ def save_json(all_prices: dict[str, dict[str, float]], timestamp: datetime) -> N
 
 # ── Aktörer ───────────────────────────────────────────────────────────────────
 
-AKTÖRER = [
-    # --- Befintliga ---
+# Snabba aktörer: vanliga requests, körs var 5:e minut
+AKTÖRER_SNABB = [
     ("Guldbrev",           fetch_guldbrev),
     ("Diamantbrev",        fetch_diamantbrev),
-    ("Pantit",             fetch_pantit),
     ("Noblex",             fetch_noblex),
     ("Finguld",            fetch_finguld),
-    # ("Svenska Guld",       fetch_svenska_guld),
     ("Kaplans Ädelmetall", fetch_kaplans),
-    ("Guldcentralen",      fetch_guldcentralen),
-    # --- Nya ---
     ("Pantbanken",         fetch_pantbanken),
     ("Sefina Pantbank",    fetch_sefina),
     ("WebbGuld",           fetch_webbguld),
-    # ("Q Pantbank",         fetch_qpantbank),
-    ("Guldfynd",           fetch_guldfynd),
     ("Capitaurum",         fetch_capitaurum),
     ("SMSGuld",            fetch_smsguld),
+]
+
+# Playwright-aktörer: tyngre, körs var 30:e minut
+AKTÖRER_PLAYWRIGHT = [
+    ("Pantit",             fetch_pantit),
+    ("Guldcentralen",      fetch_guldcentralen),
+    ("Guldfynd",           fetch_guldfynd),
+    # ("Svenska Guld",       fetch_svenska_guld),
     # ("Tavex",              fetch_tavex),     # 403 överallt – blockerad
 ]
+
+# Kombinerad lista (används vid manuell körning och lokal skriptanvändning)
+AKTÖRER = AKTÖRER_SNABB + AKTÖRER_PLAYWRIGHT
 
 
 def main() -> None:
