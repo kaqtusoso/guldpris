@@ -165,15 +165,15 @@ def kör_scraper_playwright():
 
 
 # Vid start: ladda senaste sparade data (snabbt).
-# Om ingen fil finns, kör snabb-scrapern direkt (Playwright körs sedan vid nästa 30-minutersintervall).
+# Om ingen fil finns, kör full scraper så att även Playwright-aktörer får priser direkt.
 if not ladda_senaste_json():
-    print("[STARTUP] Ingen sparad data hittades – kör snabb-scraper nu...")
-    kör_scraper_snabb()
+    print("[STARTUP] Ingen sparad data hittades – kör full scraper nu (kan ta en stund)...")
+    kör_scraper()
 
 # Kör scraper varje timme automatiskt (fungerar både lokalt och på Railway)
 scheduler = BackgroundScheduler()
-scheduler.add_job(kör_scraper_snabb,      "cron", minute="*/5")   # var 5:e minut
-scheduler.add_job(kör_scraper_playwright, "cron", minute="0,30")  # var 30:e minut
+scheduler.add_job(kör_scraper,       "cron", minute="0,30")                      # full scraper vid hel/halvtimme
+scheduler.add_job(kör_scraper_snabb, "cron", minute="5,10,15,20,25,35,40,45,50,55")  # snabb-scraper däremellan
 scheduler.start()
 
 
