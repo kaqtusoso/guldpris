@@ -187,10 +187,49 @@ def from_table(soup: BeautifulSoup) -> dict[str, float]:
 
 # ── 1. Guldbrev ───────────────────────────────────────────────────────────────
 def fetch_guldbrev() -> dict[str, float]:
-    soup = get("https://www.guldbrev.se/guldpris/")
-    if not soup:
+    """
+    Guldbrev har volymbaserad prissättning med 24 viktnivåer.
+    Vi hämtar priset via deras interna PriceService API och returnerar
+    det lägsta priset (minimumWeight=0, utan snabbhetsbonus) —
+    det vill säga exakt vad en privatperson faktiskt får från gram 1.
+
+    Transparensprincip: visa aldrig topppriser som kräver stor volym.
+    300g + snabbhetsbonus = 1 020 kr/g (vilseledande).
+    0g utan snabbhetsbonus = 206 kr/g (ärligt).
+    """
+    import requests as _req
+    url = (
+        "https://www.guldbrev.se/wp-content/themes/guldbrevgulp"
+        "/WebServices/PriceService/mypages-pricematrix.php?r=f"
+    )
+    try:
+        resp = _req.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
         return {}
-    return from_text(clean(soup.get_text(" ", strip=True)))
+
+    # priceUnitsPerWeight är en lista med 2 grupper:
+    #   index 0 = utan snabbhetsbonus
+    #   index 1 = med snabbhetsbonus (+15%)
+    groups = data.get("priceUnitsPerWeight", [])
+    if not groups:
+        return {}
+
+    # Grupp 0, utan snabbhetsbonus — hitta minimumWeight=0
+    tiers = groups[0].get("priceUnitsPerWeight", [])
+    base_tier = next((t for t in tiers if t.get("minimumWeight") == 0), None)
+    if not base_tier:
+        return {}
+
+    price_units = base_tier.get("priceUnits", {}).get("priceUnits", [])
+    prices: dict[str, float] = {}
+    for pu in price_units:
+        karat_str = str(pu.get("karat", ""))
+        label = KARAT_ALIASES.get(karat_str)   # "18" → "18K" etc.
+        if label and pu.get("price"):
+            prices[label] = float(pu["price"])
+    return prices
 
 
 # ── 2. Diamantbrev ────────────────────────────────────────────────────────────
