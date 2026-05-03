@@ -138,10 +138,17 @@ def _kör_aktörer(aktörer: list, label: str) -> None:
             else:
                 all_prices[name] = {}
 
+    def _bygg_aktör_priser(priser: dict) -> dict:
+        """Plockar ut karatpriser + eventuell _tiers-matris (för volymbaserade aktörer)."""
+        result = {karat: priser[karat] for karat in KARAT_ORDER if karat in priser}
+        if "_tiers" in priser:
+            result["_tiers"] = priser["_tiers"]
+        return result
+
     latest_prices = {
         "hämtad": now.strftime("%Y-%m-%d %H:%M"),
         "priser": {
-            aktör: {karat: priser[karat] for karat in KARAT_ORDER if karat in priser}
+            aktör: _bygg_aktör_priser(priser)
             for aktör, priser in all_prices.items()
         },
     }

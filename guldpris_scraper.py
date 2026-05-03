@@ -186,16 +186,19 @@ def from_table(soup: BeautifulSoup) -> dict[str, float]:
 
 
 # ── 1. Guldbrev ───────────────────────────────────────────────────────────────
-def fetch_guldbrev() -> dict[str, float]:
+def fetch_guldbrev() -> dict:
     """
     Guldbrev har volymbaserad prissättning med 24 viktnivåer.
-    Vi hämtar priset via deras interna PriceService API och returnerar
-    det lägsta priset (minimumWeight=0, utan snabbhetsbonus) —
-    det vill säga exakt vad en privatperson faktiskt får från gram 1.
+    Vi hämtar hela matrisen via deras interna PriceService API.
 
-    Transparensprincip: visa aldrig topppriser som kräver stor volym.
-    300g + snabbhetsbonus = 1 020 kr/g (vilseledande).
-    0g utan snabbhetsbonus = 206 kr/g (ärligt).
+    Returnerar:
+      - Vanliga karatnyckar (18K, 14K etc.) med basvärdet från gram 0 (ärligt minimipris)
+      - _tiers: lista med alla viktnivåer så frontend kan visa rätt pris
+        för den vikt användaren faktiskt skickar in.
+
+    Transparensprincip: visa alltid priset för den vikt användaren anger,
+    aldrig ett annonserat toppris som kräver 200-300g.
+    Exempel 18K: 0g=206 kr/g, 50g=324 kr/g, 150g=483 kr/g, 300g=596 kr/g.
     """
     import requests as _req
     url = (
@@ -209,26 +212,37 @@ def fetch_guldbrev() -> dict[str, float]:
     except Exception:
         return {}
 
-    # priceUnitsPerWeight är en lista med 2 grupper:
-    #   index 0 = utan snabbhetsbonus
+    # priceUnitsPerWeight: lista med 2 grupper
+    #   index 0 = utan snabbhetsbonus  ← vi använder denna
     #   index 1 = med snabbhetsbonus (+15%)
     groups = data.get("priceUnitsPerWeight", [])
     if not groups:
         return {}
 
-    # Grupp 0, utan snabbhetsbonus — hitta minimumWeight=0
-    tiers = groups[0].get("priceUnitsPerWeight", [])
-    base_tier = next((t for t in tiers if t.get("minimumWeight") == 0), None)
-    if not base_tier:
-        return {}
+    raw_tiers = groups[0].get("priceUnitsPerWeight", [])
+    # Sortera på minimumWeight så vi kan göra stegvis lookup
+    raw_tiers_sorted = sorted(raw_tiers, key=lambda t: t.get("minimumWeight", 0))
 
-    price_units = base_tier.get("priceUnits", {}).get("priceUnits", [])
-    prices: dict[str, float] = {}
-    for pu in price_units:
-        karat_str = str(pu.get("karat", ""))
-        label = KARAT_ALIASES.get(karat_str)   # "18" → "18K" etc.
-        if label and pu.get("price"):
-            prices[label] = float(pu["price"])
+    # Bygg _tiers: [{"min_vikt": 0, "18K": 206, "14K": 160, ...}, ...]
+    tiers_list = []
+    for t in raw_tiers_sorted:
+        tier_entry: dict = {"min_vikt": t.get("minimumWeight", 0)}
+        for pu in t.get("priceUnits", {}).get("priceUnits", []):
+            label = KARAT_ALIASES.get(str(pu.get("karat", "")))
+            if label and pu.get("price"):
+                tier_entry[label] = float(pu["price"])
+        tiers_list.append(tier_entry)
+
+    # Baspriser = priset vid min_vikt=0 (ärligt minimipris från gram 1)
+    prices: dict = {}
+    if tiers_list:
+        base = tiers_list[0]
+        for k, v in base.items():
+            if k != "min_vikt":
+                prices[k] = v
+
+    # Lägg med hela tier-matrisen så frontend kan slå upp rätt pris per vikt
+    prices["_tiers"] = tiers_list
     return prices
 
 
