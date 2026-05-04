@@ -692,49 +692,97 @@ def fetch_capitaurum() -> dict[str, float]:
 
 
 # ── 15. SMSGuld ───────────────────────────────────────────────────────────────
-def fetch_smsguld() -> dict[str, float]:
+def fetch_smsguld() -> dict:
     """
-    SMSGuld har priserna hårdkodade i ett JS-objekt (karatPrices) på startsidan.
-    Faktiskt utbetalt pris beräknas med samma logik som sajten:
-      24K:    basePrice × 0.95
-      Övriga: basePrice × 0.85 × 1.10
-    Stödda karat: 14K, 18K, 22K, 24K.
+    SMSGuld har volymbaserad prissättning via en inverterad Bézier-kurva.
+    Baspriser hämtas från JS på /prissattning (serverrenderade, uppdateras dagligen).
+
+    Betalningslogik (verifierad mot deras kalkylator-JS, maj 2026):
+      24K:    basePrice × 0.90  (utan certifikat — ärlig miniminivå)
+              basePrice × 0.95  (med certifikat — bonus för certifierade guldtackor)
+      Övriga: basePrice × calculatePayout(vikt)  (Bézier-kurva, se nedan)
+              Valfri snabbhetsbonus: ×1.10 om guldet postas nästa vardag
+
+    Bézier-kurvan (3 kontrollpunkter, utan snabbhetsbonus):
+      p1: 1g  → 85%  (startpunkt)
+      p2: 60g → 60%  (SÄMSTA punkten — mellanvolymer straffas)
+      p3: 200g→ 85%  (återhämtning vid stor volym)
+
+    Transparensprincip: vi visar ALLTID priset utan bonusar.
+    _tiers ger frontend möjlighet att visa rätt pris för angiven vikt.
+    Notera: SMSGuld sätter slutpriset vid mottagning — detta är en uppskattning.
     """
-    headers = {
+    _HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         )
     }
+    # Hämta /prissattning — den har den fullständiga kalkylatorn med korrekt formel
     try:
-        resp = requests.get("https://www.smsguld.se", headers=headers, timeout=20)
+        resp = requests.get("https://smsguld.se/prissattning", headers=_HEADERS, timeout=20)
         resp.raise_for_status()
     except requests.RequestException as exc:
         print(f"  [FEL] SMSGuld: {exc}", file=sys.stderr)
         return {}
 
-    # Hitta: const karatPrices = { '24': 1447.35, '22': 1326.74, ... };
+    # Extrahera karatPrices från JS: const karatPrices = { '24': 1447.35, ... }
     block = re.search(r"const\s+karatPrices\s*=\s*\{([^}]+)\}", resp.text)
     if not block:
         print("  [FEL] SMSGuld: karatPrices-blocket hittades inte.", file=sys.stderr)
         return {}
 
-    prices: dict[str, float] = {}
+    base_prices: dict[str, float] = {}
     for entry in re.finditer(r"'(\d+)'\s*:\s*([\d.]+)", block.group(1)):
         karat_num = entry.group(1)
-        base = float(entry.group(2))
-        key = KARAT_ALIASES.get(karat_num)
-        if not key:
-            continue
-        if karat_num == "24":
-            final = round(base * 0.95, 2)
-        else:
-            final = round(base * 0.85 * 1.10, 2)
-        if 50 < final < 10000:
-            prices[key] = final
+        label = KARAT_ALIASES.get(karat_num)
+        if label:
+            base_prices[label] = float(entry.group(2))
 
-    print(f"  [SMSGuld] Hämtade {len(prices)} karat: {list(prices.keys())}", file=sys.stderr)
+    if not base_prices:
+        return {}
+
+    # ── Bézier-utbetalningskurva (utan snabbhetsbonus) ────────────────────────
+    def _payout(weight: float) -> float:
+        """Returnerar utbetalningsprocent för icke-24K baserat på vikten i gram."""
+        p1x, p1y = 1.0,   0.85
+        p2x, p2y = 60.0,  0.60
+        p3x, p3y = 200.0, 0.85
+        if weight <= p2x:
+            t = (weight - p1x) / (p2x - p1x)
+            return p1y * (1-t)**2 + p2y * 2*(1-t)*t + p2y * t**2
+        elif weight <= p3x:
+            t = (weight - p2x) / (p3x - p2x)
+            return p2y * (1-t)**2 + p2y * 2*(1-t)*t + p3y * t**2
+        return p3y
+
+    # Viktnivåer att sampla (täcker hela kurvan inkl. sämsta punkten vid 60g)
+    _VIKTER = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100, 120, 150, 200, 300]
+
+    # Bygg _tiers — samma format som Guldbrev
+    tiers_list = []
+    for v in _VIKTER:
+        tier: dict = {"min_vikt": v}
+        for label, base in base_prices.items():
+            if label == "24K":
+                tier[label] = round(base * 0.90, 2)   # utan certifikat
+            else:
+                tier[label] = round(base * _payout(v), 2)
+        tiers_list.append(tier)
+
+    # Baspriser = priset vid 1g (ärlig miniminivå utan bonusar)
+    prices: dict = {}
+    for label, base in base_prices.items():
+        if label == "24K":
+            val = round(base * 0.90, 2)
+        else:
+            val = round(base * _payout(1.0), 2)
+        if 50 < val < 10000:
+            prices[label] = val
+
+    prices["_tiers"] = tiers_list
+    print(f"  [SMSGuld] Hämtade {len(base_prices)} karat: {list(base_prices.keys())}", file=sys.stderr)
     return prices
 
 
