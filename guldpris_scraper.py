@@ -476,112 +476,160 @@ def fetch_sefina() -> dict[str, float]:
     print("  [INFO] Sefina: Cloudflare Bot Management blockerar automatisk hämtning.", file=sys.stderr)
     return {}
 # ── 11. WebbGuld ──────────────────────────────────────────────────────────────
-def fetch_webbguld() -> dict[str, float]:
+def fetch_webbguld() -> dict:
     """
-    WebbGuld har priserna hårdkodade direkt i en JS-funktion (change(e)) på
-    /salja-guld – inget API, inget Playwright behövs.
+    WebbGuld har volymbaserad prissättning med 6 viktbaserade prisnivåer.
+    Priser hämtas från JS-funktion change(e) på /salja-guld (inline script, ingen extern API).
 
-    Priset varierar med vikt (gram). Vi returnerar priset för 1-4g (lägsta
-    viktintervallet) som jämförelsepris. Högre vikt ger något bättre pris.
+    6 unika prisnivåer (gram):
+      1–99g   → basispris (exponeras som standardvärde)
+      100–199g → ca +1.2%
+      200–249g → ca +2.4%
+      250–274g → ca +3.6%
+      275–299g → ca +4.8%
+      300g+    → ca +7.2%
 
-    OBS: Sajten har ett stavfel i JS – "rice8" istället för "price8" i
-    300g+-blocket. Det hanteras med en fallback-regex.
+    24K: fast pris oavsett vikt.
+    21.6K stöds via JS-nyckel price216.
+    OBS: stavfel 'rice8' (istället för 'price8') i 300g+-blocket för 8K – hanteras.
+
+    Transparensprincip: baspriser visar alltid priset vid lägsta viktnivå (1g),
+    aldrig det bättre priset som bara fås vid 300g+.
     """
-    _KARATS_JS = ["8", "9", "10", "14", "18", "20", "21", "22", "23"]
+    _KARAT_JS_KEYS = ["8", "9", "10", "14", "18", "20", "21", "216", "22", "23"]
     _KARAT_LABELS = {
-        "8": "8K", "9": "9K", "10": "10K", "14": "14K", "18": "18K",
-        "20": "20K", "21": "21K", "22": "22K", "23": "23K",
+        "8":   "8K",   "9":   "9K",   "10":  "10K",  "14":  "14K",
+        "18":  "18K",  "20":  "20K",  "21":  "21K",  "216": "21.6K",
+        "22":  "22K",  "23":  "23K",
     }
 
-    def _extract_block(body: str) -> dict[str, float]:
+    def _extract_block_prices(body: str) -> dict[str, float]:
+        """Extraherar prisvariabler ur ett JS-block. Hanterar stavfelet 'rice8'."""
         prices: dict[str, float] = {}
-        for k in _KARATS_JS:
-            m = re.search(rf"price{k}\s*=\s*([\d.]+)", body)
+        for k in _KARAT_JS_KEYS:
+            # \b säkerställer att rice21 inte råkar matcha price216
+            m = re.search(rf"(?:p)?rice{k}\b\s*=\s*([\d.]+)", body)
             if m:
                 prices[k] = float(m.group(1))
-            elif k == "8":
-                m2 = re.search(r"rice8\s*=\s*([\d.]+)", body)
-                if m2:
-                    prices[k] = float(m2.group(1))
         return prices
 
-    headers = {
+    def _parse_tiers(js_text: str) -> list[dict]:
+        """
+        Parsar change(e)-funktionen och returnerar vikttier-lista.
+        13 JS-block → 6 unika prisnivåer efter deduplicering.
+        """
+        block_pattern = re.compile(
+            r"(?:if|else\s+if)\s*\(\s*e\s*>\s*(\d+)(?:\s*&&\s*e\s*<\s*\d+)?\s*\)\s*\{([^}]+)\}",
+            re.DOTALL,
+        )
+        tiers: list[dict] = []
+        last_prices: dict[str, float] = {}
+        for match in block_pattern.finditer(js_text):
+            lower = int(match.group(1))
+            min_vikt = lower + 1  # e > 0 → min_vikt=1; e > 99 → min_vikt=100
+            block_prices = _extract_block_prices(match.group(2))
+            if not block_prices or block_prices == last_prices:
+                continue  # Hoppa över identiska eller tomma block
+            tier: dict = {"min_vikt": min_vikt}
+            tier.update(block_prices)
+            tiers.append(tier)
+            last_prices = block_prices
+        return tiers
+
+    _HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7",
     }
 
-    js_content = ""
-    for attempt in range(1, 4):  # 3 försök med 5s mellanrum
+    js_text = ""
+
+    # ── Försök 1–3: requests ──────────────────────────────────────────────────
+    for attempt in range(1, 4):
         try:
-            resp = requests.get("https://webbguld.se/salja-guld", headers=headers, timeout=20)
-            print(f"  [WebbGuld] Försök {attempt}: HTTP {resp.status_code}, {len(resp.text)} tecken", file=sys.stderr)
+            resp = requests.get("https://webbguld.se/salja-guld", headers=_HEADERS, timeout=20)
             resp.raise_for_status()
             soup_wg = BeautifulSoup(resp.text, "html.parser")
-
-            for script in soup_wg.find_all("script"):
-                content = script.string or ""
-                if "price24" in content and "price18" in content and "change(" in content:
-                    js_content = content
-                    break
-
-            if js_content:
-                break  # Lyckades – avbryt retry-loopen
-
-            # JS-blocket saknas – logga och försök igen
-            script_contents = [s.string or "" for s in soup_wg.find_all("script")]
-            has_price24 = any("price24" in c for c in script_contents)
-            has_price18 = any("price18" in c for c in script_contents)
-            has_change  = any("change(" in c for c in script_contents)
+            # Kombinera ALLA inline-scripts – change()-funktionen kan vara uppdelad
+            combined = "\n".join(s.string or "" for s in soup_wg.find_all("script"))
+            if "price18" in combined and "change(" in combined:
+                js_text = combined
+                print(f"  [WebbGuld] JS hittades via requests (försök {attempt})", file=sys.stderr)
+                break
             print(
-                f"  [WebbGuld] Försök {attempt}: JS-block saknas – "
-                f"price24={has_price24}, price18={has_price18}, change()={has_change}, "
-                f"scripts={len(script_contents)}",
+                f"  [WebbGuld] Försök {attempt}: JS saknas "
+                f"(price18={'price18' in combined}, change={'change(' in combined}, "
+                f"scripts={len(soup_wg.find_all('script'))})",
                 file=sys.stderr,
             )
-            if attempt < 3:
-                import time; time.sleep(5)
-
         except Exception as exc:
-            print(f"  [FEL] WebbGuld försök {attempt}: {exc}", file=sys.stderr)
-            if attempt < 3:
-                import time; time.sleep(5)
+            print(f"  [FEL] WebbGuld requests försök {attempt}: {exc}", file=sys.stderr)
+        if attempt < 3:
+            import time; time.sleep(5)
 
-    if not js_content:
+    # ── Playwright-fallback (om requests misslyckas på Railway) ───────────────
+    if not js_text:
+        print("  [WebbGuld] Försöker Playwright som fallback…", file=sys.stderr)
+        soup_wg = playwright_get("https://webbguld.se/salja-guld", wait_ms=3000)
+        if soup_wg:
+            combined = "\n".join(s.string or "" for s in soup_wg.find_all("script"))
+            if "price18" in combined and "change(" in combined:
+                js_text = combined
+                print("  [WebbGuld] JS hittades via Playwright", file=sys.stderr)
+
+    if not js_text:
+        print("  [FEL] WebbGuld: Kunde inte hitta JS (varken requests eller Playwright)", file=sys.stderr)
         return {}
 
     try:
+        # 24K: fast pris oavsett vikt
+        m24 = re.search(r"\bprice24\s*=\s*([\d.]+)", js_text)
+        price24 = float(m24.group(1)) if m24 else None
 
-        result: dict[str, float] = {}
+        # Bygg unika vikttier (råformat med JS-nycklar, utan 24K)
+        raw_tiers = _parse_tiers(js_text)
+        if not raw_tiers:
+            print("  [FEL] WebbGuld: Inga vikttier hittades i JS-texten", file=sys.stderr)
+            return {}
 
-        # 24K: fast pris
-        m24 = re.search(r"price24\s*=\s*([\d.]+)", js_content)
-        if m24:
-            result["24K"] = float(m24.group(1))
+        # Konvertera JS-nycklar → karat-labels, filtrera orimliga värden, lägg till 24K
+        label_tiers: list[dict] = []
+        for raw in raw_tiers:
+            tier: dict = {"min_vikt": raw["min_vikt"]}
+            for k, v in raw.items():
+                if k == "min_vikt":
+                    continue
+                label = _KARAT_LABELS.get(k)
+                if label and 50 < v < 10000:
+                    tier[label] = v
+            if price24 and 50 < price24 < 10000:
+                tier["24K"] = price24
+            if len(tier) > 1:  # minst ett karat utöver min_vikt
+                label_tiers.append(tier)
 
-        # Övriga karat: hitta det första if-blocket (e > 0 && e < 5 = "1-4g")
-        block_pattern = re.compile(
-            r"(?:if|else if)\s*\(e\s*>\s*(\d+)(?:\s*&&\s*e\s*<\s*(\d+))?\)\s*\{([^}]+)\}",
-            re.DOTALL,
+        if not label_tiers:
+            return {}
+
+        # Baspriser = lägsta viktnivå (min_vikt=1, ärligt minimipris)
+        prices: dict = {}
+        first = min(label_tiers, key=lambda t: t["min_vikt"])
+        for k, v in first.items():
+            if k != "min_vikt":
+                prices[k] = v
+
+        prices["_tiers"] = label_tiers
+        min_vikter = [t["min_vikt"] for t in label_tiers]
+        print(
+            f"  [WebbGuld] {len(prices) - 1} karat, {len(label_tiers)} viktnivåer: {min_vikter}g",
+            file=sys.stderr,
         )
-        for match in block_pattern.finditer(js_content):
-            lower = int(match.group(1))
-            upper = int(match.group(2)) if match.group(2) else None
-            if lower == 0 and upper == 5:  # 1-4g-blocket
-                for k, price in _extract_block(match.group(3)).items():
-                    label = _KARAT_LABELS.get(k)
-                    if label:
-                        result[label] = price
-                break
-
-        final = {k: v for k, v in result.items() if 50 < v < 10000}
-        print(f"  [WebbGuld] Hämtade {len(final)} karat: {list(final.keys())}", file=sys.stderr)
-        return final
+        return prices
 
     except Exception as exc:
-        print(f"  [FEL] WebbGuld: {exc}", file=sys.stderr)
+        print(f"  [FEL] WebbGuld parse: {exc}", file=sys.stderr)
         return {}
 # ── 12. Q Pantbank ────────────────────────────────────────────────────────────
 def fetch_qpantbank() -> dict[str, float]:
