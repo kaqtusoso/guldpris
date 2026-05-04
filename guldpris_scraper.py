@@ -757,8 +757,9 @@ def fetch_smsguld() -> dict:
             return p2y * (1-t)**2 + p2y * 2*(1-t)*t + p3y * t**2
         return p3y
 
-    # Viktnivåer att sampla (täcker hela kurvan inkl. sämsta punkten vid 60g)
-    _VIKTER = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100, 120, 150, 200, 300]
+    # Sampla varje gram 1–300 för exakt precision (Bézier är kontinuerlig —
+    # glesa punkter ger upp till 71 kr/g fel vid steglookup i frontend)
+    _VIKTER = list(range(1, 301)) + [500, 1000]
 
     # Bygg _tiers — samma format som Guldbrev
     tiers_list = []
