@@ -293,6 +293,10 @@ def fetch_noblex() -> dict[str, float]:
     prices = from_table(soup)
     if not prices:
         prices = from_text(clean(soup.get_text(" ", strip=True)))
+    # 24K-priset gäller enbart "Guldtackor & Guldmynt" — ej vanligt skrotguld/smycken.
+    # Noblex saknar ett publicerat skrotguldspris för 24K. Tas bort för att undvika
+    # att visa ett missvisande toppris för en säljare med t.ex. ett 24K smycke.
+    prices.pop("24K", None)
     return prices
 
 
