@@ -259,33 +259,29 @@ def fetch_diamantbrev() -> dict[str, float]:
 
 # ── 3. Pantit ─────────────────────────────────────────────────────────────────
 def fetch_pantit() -> dict[str, float]:
-    soup = playwright_get("https://www.pantit.se/guldpris")
-    if not soup:
+    """
+    Pantit exponerar ett öppet JSON-API på /prices (ingen auth).
+    Returnerar realtidspriser för 10 guldkarat, flat prissättning oavsett vikt.
+    Format: {"success":true,"prices":{"Guld":{"8":333.07,"14":680.95,"18":926.44,...}}}
+    Playwright behövs ej — requests räcker.
+    """
+    try:
+        r = requests.get("https://www.pantit.se/prices", headers=HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        print(f"  [ERROR] Pantit API: {e}", file=sys.stderr)
         return {}
-    text = clean(soup.get_text(" ", strip=True))
 
-    prices = from_text(text)
-    if prices:
-        return prices
+    if not data.get("success"):
+        return {}
 
-    karat_block = re.search(r"Karat\s+Pris[^\d]+([\d\s]+)", text)
-    if karat_block:
-        nums = karat_block.group(1).split()
-        i = 0
-        while i + 1 < len(nums):
-            key = KARAT_ALIASES.get(nums[i])
-            if key:
-                try:
-                    if len(nums[i + 1]) <= 1 and i + 2 < len(nums):
-                        prices[key] = to_float(nums[i + 1] + nums[i + 2])
-                        i += 3
-                    else:
-                        prices[key] = to_float(nums[i + 1])
-                        i += 2
-                except ValueError:
-                    i += 1
-            else:
-                i += 1
+    guld = data.get("prices", {}).get("Guld", {})
+    prices: dict[str, float] = {}
+    for karat_num, pris in guld.items():
+        key = KARAT_ALIASES.get(str(karat_num))
+        if key:
+            prices[key] = round(float(pris), 2)
     return prices
 
 
