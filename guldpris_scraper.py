@@ -363,6 +363,8 @@ def fetch_kaplans() -> dict[str, float]:
         label = clean(cells[0].get_text())
         if "guld" not in label.lower():
             continue
+        if "tacka" in label.lower():
+            continue  # Skip Guldtacka — kräver certifierade investeringstackor, ej vanligt skrotguld
         value = clean(cells[1].get_text())
         key = norm_karat(label)
         m = re.search(r"([\d\s]+(?:[.,]\d{1,2})?)", value)
